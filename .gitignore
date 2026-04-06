@@ -12,3 +12,5 @@ release/
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
+
+.github/workflows/
