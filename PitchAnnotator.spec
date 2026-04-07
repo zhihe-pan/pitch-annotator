@@ -3,6 +3,8 @@ from pathlib import Path
 import sys
 
 from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_submodules
 from PyInstaller.utils.hooks import copy_metadata
 
 
@@ -17,11 +19,30 @@ hiddenimports = [
 
 datas += copy_metadata("librosa")
 
-for package_name in ("praat-parselmouth", "pyqtgraph", "librosa"):
-    pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all(package_name)
-    datas += pkg_datas
-    binaries += pkg_binaries
-    hiddenimports += pkg_hiddenimports
+pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all("parselmouth")
+datas += pkg_datas
+binaries += pkg_binaries
+hiddenimports += pkg_hiddenimports
+
+datas += collect_data_files(
+    "pyqtgraph",
+    excludes=[
+        "examples",
+        "examples/*",
+        "opengl",
+        "opengl/*",
+    ],
+)
+hiddenimports += collect_submodules(
+    "pyqtgraph",
+    filter=lambda name: not name.startswith("pyqtgraph.examples")
+    and not name.startswith("pyqtgraph.opengl"),
+)
+
+pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all("librosa")
+datas += pkg_datas
+binaries += pkg_binaries
+hiddenimports += pkg_hiddenimports
 
 a = Analysis(
     ["main.py"],

@@ -11,6 +11,7 @@ class AudioProcessor:
     def __init__(self):
         self.audio_data = None
         self.sr = None
+        self.loaded_filepath = None
         
         # Spectrogram data
         self.S_db = None
@@ -20,6 +21,10 @@ class AudioProcessor:
         self.maximum_frequency = 5000.0
         self.dynamic_range_db = 50.0
         self.filtered_ac_attenuation_at_top = 0.03
+    
+    def _maximum_formant_for_file(self):
+        filepath = "" if self.loaded_filepath is None else str(self.loaded_filepath).lower()
+        return 5500.0 if "gender2" in filepath else 5000.0
 
     def load_audio(self, filepath):
         """
@@ -33,6 +38,7 @@ class AudioProcessor:
             
         self.audio_data = y
         self.sr = sr
+        self.loaded_filepath = str(filepath)
         self._compute_spectrogram()
         
         return self.audio_data, self.sr
@@ -71,7 +77,7 @@ class AudioProcessor:
         Extract pitch using parselmouth
         """
         if self.audio_data is None:
-            return np.array([]), np.array([]), np.array([], dtype=int)
+            return np.array([]), np.array([]), np.array([], dtype=int), np.array([]), np.array([]), np.array([]), np.array([])
 
         filtered_audio = self._apply_filtered_ac_lowpass(
             self.audio_data,
@@ -102,7 +108,66 @@ class AudioProcessor:
         )
 
         pitch_values[pitch_values == 0] = np.nan
-        return timestamps, pitch_values, segment_labels
+        formant_times, f1_values, f2_values, f3_values = self.extract_formants_for_track(
+            timestamps,
+            pitch_values,
+            segment_labels,
+        )
+        return timestamps, pitch_values, segment_labels, formant_times, f1_values, f2_values, f3_values
+
+    def extract_formants_for_track(self, timestamps, pitch_values, segment_labels=None):
+        if self.audio_data is None or self.sr is None:
+            return np.array([]), np.array([]), np.array([]), np.array([])
+
+        timestamps = np.asarray(timestamps, dtype=float)
+        pitch_values = np.asarray(pitch_values, dtype=float)
+        if len(timestamps) == 0 or len(pitch_values) == 0:
+            return np.array([]), np.array([]), np.array([]), np.array([])
+
+        if segment_labels is not None and len(segment_labels) == len(pitch_values):
+            segment_labels = np.asarray(segment_labels, dtype=int)
+            voiced_mask = (segment_labels == SEGMENT_VOICED) & np.isfinite(pitch_values) & (pitch_values > 0)
+        else:
+            voiced_mask = np.isfinite(pitch_values) & (pitch_values > 0)
+        if not np.any(voiced_mask):
+            return np.array([]), np.array([]), np.array([]), np.array([])
+
+        snd = parselmouth.Sound(self.audio_data, self.sr)
+        max_formant = self._maximum_formant_for_file()
+        try:
+            formants = snd.to_formant_burg(
+                time_step=0.01,
+                max_number_of_formants=5,
+                maximum_formant=max_formant,
+            )
+            voiced_times = timestamps[voiced_mask]
+            f1_vals = []
+            f2_vals = []
+            f3_vals = []
+            out_times = []
+            for t in voiced_times:
+                f1 = formants.get_value_at_time(1, float(t))
+                f2 = formants.get_value_at_time(2, float(t))
+                f3 = formants.get_value_at_time(3, float(t))
+                plausible = (
+                    not np.isnan(f1)
+                    and not np.isnan(f2)
+                    and not np.isnan(f3)
+                    and 50 < f1 < f2 < f3 < max_formant
+                )
+                if plausible:
+                    out_times.append(float(t))
+                    f1_vals.append(float(f1))
+                    f2_vals.append(float(f2))
+                    f3_vals.append(float(f3))
+            return (
+                np.asarray(out_times, dtype=float),
+                np.asarray(f1_vals, dtype=float),
+                np.asarray(f2_vals, dtype=float),
+                np.asarray(f3_vals, dtype=float),
+            )
+        except Exception:
+            return np.array([]), np.array([]), np.array([]), np.array([])
 
     def estimate_voiced_region(
         self,

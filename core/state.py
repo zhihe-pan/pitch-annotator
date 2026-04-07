@@ -8,6 +8,10 @@ class PitchState:
         self.timestamps = np.array([])
         self.pitch_values = np.array([])  # np.nan for unvoiced
         self.segment_labels = np.array([], dtype=int)
+        self.formant_times = np.array([])
+        self.f1_values = np.array([])
+        self.f2_values = np.array([])
+        self.f3_values = np.array([])
         self.voice_percent = 0.0
         
         self.pitch_floor = 50.0
@@ -32,6 +36,65 @@ class PitchState:
         self.audio_data = audio_data
         self.sample_rate = sample_rate
 
+    def reset(self):
+        self.audio_path = None
+        self.audio_data = None
+        self.sample_rate = None
+        self.timestamps = np.array([])
+        self.pitch_values = np.array([])
+        self.segment_labels = np.array([], dtype=int)
+        self.formant_times = np.array([])
+        self.f1_values = np.array([])
+        self.f2_values = np.array([])
+        self.f3_values = np.array([])
+        self.voice_percent = 0.0
+        self.trigger_update()
+
+    def snapshot_full_state(self):
+        return {
+            "audio_path": self.audio_path,
+            "audio_data": None if self.audio_data is None else np.array(self.audio_data, copy=True),
+            "sample_rate": self.sample_rate,
+            "timestamps": np.array(self.timestamps, copy=True),
+            "pitch_values": np.array(self.pitch_values, copy=True),
+            "segment_labels": np.array(self.segment_labels, copy=True),
+            "formant_times": np.array(self.formant_times, copy=True),
+            "f1_values": np.array(self.f1_values, copy=True),
+            "f2_values": np.array(self.f2_values, copy=True),
+            "f3_values": np.array(self.f3_values, copy=True),
+            "voice_percent": float(self.voice_percent),
+            "pitch_floor": float(self.pitch_floor),
+            "pitch_ceiling": float(self.pitch_ceiling),
+            "time_step": float(self.time_step),
+            "voicing_threshold": float(self.voicing_threshold),
+            "silence_threshold": float(self.silence_threshold),
+            "octave_cost": float(self.octave_cost),
+            "octave_jump_cost": float(self.octave_jump_cost),
+            "voiced_unvoiced_cost": float(self.voiced_unvoiced_cost),
+        }
+
+    def restore_full_state(self, snapshot):
+        self.audio_path = snapshot["audio_path"]
+        self.audio_data = None if snapshot["audio_data"] is None else np.array(snapshot["audio_data"], copy=True)
+        self.sample_rate = snapshot["sample_rate"]
+        self.timestamps = np.array(snapshot["timestamps"], copy=True)
+        self.pitch_values = np.array(snapshot["pitch_values"], copy=True)
+        self.segment_labels = np.array(snapshot["segment_labels"], copy=True)
+        self.formant_times = np.array(snapshot["formant_times"], copy=True)
+        self.f1_values = np.array(snapshot["f1_values"], copy=True)
+        self.f2_values = np.array(snapshot["f2_values"], copy=True)
+        self.f3_values = np.array(snapshot["f3_values"], copy=True)
+        self.voice_percent = float(snapshot["voice_percent"])
+        self.pitch_floor = float(snapshot["pitch_floor"])
+        self.pitch_ceiling = float(snapshot["pitch_ceiling"])
+        self.time_step = float(snapshot["time_step"])
+        self.voicing_threshold = float(snapshot["voicing_threshold"])
+        self.silence_threshold = float(snapshot["silence_threshold"])
+        self.octave_cost = float(snapshot["octave_cost"])
+        self.octave_jump_cost = float(snapshot["octave_jump_cost"])
+        self.voiced_unvoiced_cost = float(snapshot["voiced_unvoiced_cost"])
+        self.trigger_update()
+
     def snapshot_edit_state(self):
         return {
             "pitch_values": np.array(self.pitch_values, copy=True),
@@ -45,13 +108,24 @@ class PitchState:
         self.voice_percent = float(snapshot["voice_percent"])
         self.trigger_update()
 
-    def update_pitch_data(self, timestamps, pitch_values, segment_labels=None):
+    def update_pitch_data(self, timestamps, pitch_values, segment_labels=None, formant_times=None, f1_values=None, f2_values=None, f3_values=None):
         self.timestamps = timestamps
         self.pitch_values = pitch_values
         if segment_labels is None:
             segment_labels = np.zeros(len(timestamps), dtype=int)
         self.segment_labels = np.asarray(segment_labels, dtype=int)
+        self.formant_times = np.array([]) if formant_times is None else np.asarray(formant_times, dtype=float)
+        self.f1_values = np.array([]) if f1_values is None else np.asarray(f1_values, dtype=float)
+        self.f2_values = np.array([]) if f2_values is None else np.asarray(f2_values, dtype=float)
+        self.f3_values = np.array([]) if f3_values is None else np.asarray(f3_values, dtype=float)
         self.voice_percent = self._compute_voice_percent()
+        self.trigger_update()
+
+    def update_formant_data(self, formant_times, f1_values, f2_values, f3_values):
+        self.formant_times = np.array([]) if formant_times is None else np.asarray(formant_times, dtype=float)
+        self.f1_values = np.array([]) if f1_values is None else np.asarray(f1_values, dtype=float)
+        self.f2_values = np.array([]) if f2_values is None else np.asarray(f2_values, dtype=float)
+        self.f3_values = np.array([]) if f3_values is None else np.asarray(f3_values, dtype=float)
         self.trigger_update()
 
     def set_voiced(self, start_time, end_time, new_values):

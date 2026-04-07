@@ -8,9 +8,14 @@ venv/
 build/
 dist/
 release/
+.pyinstaller/
+source_release/
 
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
+
+* 2.spec
+build 2.py
 
 .github/workflows/

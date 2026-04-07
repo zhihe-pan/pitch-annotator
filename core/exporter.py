@@ -1,16 +1,48 @@
 import csv
 import numpy as np
 
-def export_csv(filepath: str, timestamps: np.ndarray, pitch_values: np.ndarray):
+PARAMETER_COLUMNS = [
+    "pitch_floor",
+    "pitch_ceiling",
+    "time_step",
+    "voicing_threshold",
+    "silence_threshold",
+    "octave_cost",
+    "octave_jump_cost",
+    "voiced_unvoiced_cost",
+]
+
+
+def export_csv(filepath: str, timestamps: np.ndarray, pitch_values: np.ndarray, pitch_params=None, audio_path=None, segment_labels=None):
     """
     Export pitch contour to CSV. Unvoiced frames will be exported with Frequency = 0.
     """
-    with open(filepath, 'w', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(['Time (s)', 'Frequency (Hz)'])
-        for t, p in zip(timestamps, pitch_values):
-            freq = 0 if np.isnan(p) else p
-            writer.writerow([f"{t:.6f}", f"{freq:.6f}"])
+    timestamps = np.asarray(timestamps, dtype=float)
+    pitch_values = np.asarray(pitch_values, dtype=float)
+    if segment_labels is None:
+        segment_labels = np.full(len(pitch_values), -1, dtype=int)
+    else:
+        segment_labels = np.asarray(segment_labels, dtype=int)
+        if len(segment_labels) != len(pitch_values):
+            segment_labels = np.full(len(pitch_values), -1, dtype=int)
+
+    pitch_params = {} if pitch_params is None else dict(pitch_params)
+    metadata = {name: pitch_params.get(name, "") for name in PARAMETER_COLUMNS}
+    metadata["audio_file"] = "" if audio_path is None else str(audio_path)
+
+    fieldnames = ["audio_file"] + PARAMETER_COLUMNS + ["Time (s)", "Frequency (Hz)", "SegmentLabel"]
+    with open(filepath, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        freqs = np.where(np.isnan(pitch_values), 0.0, pitch_values)
+        rows = []
+        for time_value, freq_value, segment_label in zip(timestamps, freqs, segment_labels):
+            row = dict(metadata)
+            row["Time (s)"] = f"{float(time_value):.6f}"
+            row["Frequency (Hz)"] = f"{float(freq_value):.6f}"
+            row["SegmentLabel"] = int(segment_label)
+            rows.append(row)
+        writer.writerows(rows)
 
 def export_praat_pitch(filepath: str, timestamps: np.ndarray, pitch_values: np.ndarray):
     """

@@ -108,6 +108,12 @@ class PitchCanvas(QWidget):
             brush=pg.mkBrush("#ffcc00"),
         )
         self.plot_widget.addItem(self.selected_point_item)
+        self.f1_item = pg.ScatterPlotItem(size=6, pen=pg.mkPen("#b91c1c", width=0.8), brush=pg.mkBrush("#ef4444"))
+        self.f2_item = pg.ScatterPlotItem(size=6, pen=pg.mkPen("#c2410c", width=0.8), brush=pg.mkBrush("#fb923c"))
+        self.f3_item = pg.ScatterPlotItem(size=6, pen=pg.mkPen("#a16207", width=0.8), brush=pg.mkBrush("#facc15"))
+        self.plot_widget.addItem(self.f1_item)
+        self.plot_widget.addItem(self.f2_item)
+        self.plot_widget.addItem(self.f3_item)
         self.quantile_lines = {
             "p20": pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen("#2a6fdb", width=1.5, style=Qt.DashLine)),
             "p50": pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen("#c0392b", width=1.5, style=Qt.DashLine)),
@@ -205,6 +211,29 @@ class PitchCanvas(QWidget):
             line_label.setStyleSheet("color: #111111; font-weight: 600; background: transparent;")
             self.legend_layout.addWidget(line_swatch)
             self.legend_layout.addWidget(line_label)
+
+        divider2 = QLabel("|")
+        divider2.setStyleSheet("color: #666666; font-weight: 700; background: transparent; padding: 0 4px;")
+        self.legend_layout.addWidget(divider2)
+
+        formant_title = QLabel("Formants:")
+        formant_title.setStyleSheet("color: #111111; font-weight: 700; background: transparent;")
+        self.legend_layout.addWidget(formant_title)
+        formant_items = [
+            ("F1", "#ef4444"),
+            ("F2", "#fb923c"),
+            ("F3", "#facc15"),
+        ]
+        for text, color in formant_items:
+            dot = QFrame()
+            dot.setFixedSize(10, 10)
+            dot.setStyleSheet(
+                f"background-color: {color}; border: 1px solid #666666; border-radius: 5px;"
+            )
+            label = QLabel(text)
+            label.setStyleSheet("color: #111111; font-weight: 600; background: transparent;")
+            self.legend_layout.addWidget(dot)
+            self.legend_layout.addWidget(label)
         self.legend_layout.addStretch()
 
     def show_region(self, show=True):
@@ -381,6 +410,25 @@ class PitchCanvas(QWidget):
         self.pitch_item.setData(x=timestamps, y=pitch_values)
         self._update_selected_point_visual()
 
+    def update_formants(self, formant_times, f1_values, f2_values, f3_values):
+        formant_times = np.asarray(formant_times, dtype=float)
+        f1_values = np.asarray(f1_values, dtype=float)
+        f2_values = np.asarray(f2_values, dtype=float)
+        f3_values = np.asarray(f3_values, dtype=float)
+
+        def finite_xy(times, values):
+            if len(times) == 0 or len(values) == 0:
+                return np.array([]), np.array([])
+            mask = np.isfinite(times) & np.isfinite(values)
+            return times[mask], values[mask]
+
+        x1, y1 = finite_xy(formant_times, f1_values)
+        x2, y2 = finite_xy(formant_times, f2_values)
+        x3, y3 = finite_xy(formant_times, f3_values)
+        self.f1_item.setData(x=x1, y=y1)
+        self.f2_item.setData(x=x2, y=y2)
+        self.f3_item.setData(x=x3, y=y3)
+
     def update_quantile_lines(self, p20, p50, p80):
         for key, value in (("p20", p20), ("p50", p50), ("p80", p80)):
             line = self.quantile_lines[key]
@@ -408,6 +456,10 @@ class PitchCanvas(QWidget):
             if selected_idx is not None:
                 event.accept()
                 return
+            self.region_item.hide()
+            self.selection_changed.emit(0.0, 0.0)
+            event.accept()
+            return
             
         # Alt + Click: Add point (request snapping via signal)
         if event.modifiers() == Qt.AltModifier and event.button() == Qt.LeftButton:

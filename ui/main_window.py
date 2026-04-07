@@ -1,5 +1,8 @@
-from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, 
-                               QFileDialog, QStatusBar, QMessageBox, QLabel)
+from pathlib import Path
+
+from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout,
+                               QVBoxLayout, QListWidget, QListWidgetItem,
+                               QStatusBar, QLabel, QGroupBox)
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from ui.canvas import PitchCanvas
@@ -7,6 +10,7 @@ from ui.control_panel import ControlPanel
 
 class MainWindow(QMainWindow):
     open_audio_requested = Signal()
+    batch_export_acoustic_csv_requested = Signal()
     export_csv_requested = Signal()
     export_praat_requested = Signal()
     export_acoustic_csv_requested = Signal()
@@ -14,6 +18,9 @@ class MainWindow(QMainWindow):
     play_selection_requested = Signal()
     play_pitch_track_requested = Signal()
     undo_requested = Signal()
+    current_audio_index_changed = Signal(int)
+    next_audio_requested = Signal()
+    previous_audio_requested = Signal()
 
     def __init__(self):
         super().__init__()
@@ -48,10 +55,25 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         
         layout = QHBoxLayout(central_widget)
-        
+
+        sidebar = QWidget()
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(8)
+        group_files = QGroupBox("Batch Audio Files")
+        files_layout = QVBoxLayout(group_files)
+        self.audio_list = QListWidget()
+        self.audio_list.currentRowChanged.connect(self.current_audio_index_changed.emit)
+        files_layout.addWidget(self.audio_list)
+        self.lbl_batch_hint = QLabel("Import multiple audio files, then select one here or use Up/Down.")
+        self.lbl_batch_hint.setWordWrap(True)
+        files_layout.addWidget(self.lbl_batch_hint)
+        sidebar_layout.addWidget(group_files)
+
         self.canvas = PitchCanvas()
         self.control_panel = ControlPanel()
-        
+
+        layout.addWidget(sidebar, stretch=0)
         layout.addWidget(self.canvas, stretch=1)
         layout.addWidget(self.control_panel)
         
@@ -63,7 +85,7 @@ class MainWindow(QMainWindow):
         menubar = self.menuBar()
         file_menu = menubar.addMenu("File")
         
-        action_open = file_menu.addAction("Open Audio...")
+        action_open = file_menu.addAction("Import Audio Files...")
         action_open.triggered.connect(self.open_audio_requested.emit)
         
         file_menu.addSeparator()
@@ -76,6 +98,9 @@ class MainWindow(QMainWindow):
 
         action_export_acoustic = file_menu.addAction("Export Acoustic Features CSV...")
         action_export_acoustic.triggered.connect(self.export_acoustic_csv_requested.emit)
+
+        action_export_batch_acoustic = file_menu.addAction("Export Batch Acoustic Features CSV...")
+        action_export_batch_acoustic.triggered.connect(self.batch_export_acoustic_csv_requested.emit)
 
         action_export_all = file_menu.addAction("Export All...")
         action_export_all.triggered.connect(self.export_all_requested.emit)
@@ -97,6 +122,10 @@ class MainWindow(QMainWindow):
         self.shortcut_play_pitch_track.activated.connect(self.play_pitch_track_requested.emit)
         self.shortcut_undo = QShortcut(QKeySequence.Undo, self)
         self.shortcut_undo.activated.connect(self.undo_requested.emit)
+        self.shortcut_next_audio = QShortcut(QKeySequence(Qt.Key_Down), self)
+        self.shortcut_next_audio.activated.connect(self.next_audio_requested.emit)
+        self.shortcut_previous_audio = QShortcut(QKeySequence(Qt.Key_Up), self)
+        self.shortcut_previous_audio.activated.connect(self.previous_audio_requested.emit)
         self.shortcut_export_all = QShortcut(QKeySequence("Ctrl+Shift+E"), self)
         self.shortcut_export_all.activated.connect(self.export_all_requested.emit)
 
@@ -108,3 +137,29 @@ class MainWindow(QMainWindow):
         self.lbl_duration.setText(
             f"Total: {total_duration:.3f}s | Selection: {selection_duration:.3f}s"
         )
+
+    def set_audio_files(self, filepaths):
+        self.audio_list.blockSignals(True)
+        self.audio_list.clear()
+        for filepath in filepaths:
+            item = QListWidgetItem(Path(filepath).name)
+            item.setToolTip(filepath)
+            self.audio_list.addItem(item)
+        self.audio_list.blockSignals(False)
+
+    def set_current_audio_index(self, index):
+        if index < 0 or index >= self.audio_list.count():
+            return
+        self.audio_list.blockSignals(True)
+        self.audio_list.setCurrentRow(index)
+        self.audio_list.blockSignals(False)
+
+    def update_audio_file_entry(self, index, filepath, dirty):
+        if index < 0 or index >= self.audio_list.count():
+            return
+        label = Path(filepath).name
+        if dirty:
+            label = f"* {label}"
+        item = self.audio_list.item(index)
+        item.setText(label)
+        item.setToolTip(filepath)

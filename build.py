@@ -48,7 +48,9 @@ def clean() -> None:
 def run_pyinstaller() -> None:
     cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", str(ROOT / "PitchAnnotator.spec")]
     print("Running:", " ".join(cmd))
-    subprocess.run(cmd, check=True, cwd=ROOT)
+    env = dict(**__import__("os").environ)
+    env["PYINSTALLER_CONFIG_DIR"] = str(ROOT / ".pyinstaller")
+    subprocess.run(cmd, check=True, cwd=ROOT, env=env)
 
 
 def package_release() -> Path:
