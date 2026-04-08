@@ -90,7 +90,7 @@ class PitchCanvas(QWidget):
 
         # Spectrogram Image
         self.img_item = pg.ImageItem()
-        self.img_item.setOpacity(0.82)
+        self.img_item.setOpacity(0.70)
         self.plot_widget.addItem(self.img_item)
         
         # Pitch curve
@@ -339,7 +339,7 @@ class PitchCanvas(QWidget):
             return
         
         max_db = float(np.nanmax(S_db))
-        min_db = max_db - 50.0
+        min_db = max_db - 70.0
         self.img_item.setImage(S_db.T, autoLevels=False)
         self.img_item.setLevels([min_db, max_db])
         

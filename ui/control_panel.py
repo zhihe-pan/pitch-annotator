@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
-                               QLabel, QSpinBox, QDoubleSpinBox, QSlider,
+                               QLabel, QSpinBox, QDoubleSpinBox, QSlider, QComboBox,
                                QPushButton, QGroupBox, QFormLayout)
 from PySide6.QtCore import Signal, Qt
 
@@ -12,6 +12,7 @@ class ControlPanel(QWidget):
     set_region_unvoiced = Signal()
     set_region_silence = Signal()
     volume_changed = Signal(int)
+    audio_output_device_changed = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -107,6 +108,8 @@ class ControlPanel(QWidget):
 
         group_playback = QGroupBox("Playback")
         playback_layout = QFormLayout()
+        self.combo_audio_output = QComboBox()
+        playback_layout.addRow("Output Device:", self.combo_audio_output)
         self.slider_volume = QSlider(Qt.Horizontal)
         self.slider_volume.setRange(0, 100)
         self.slider_volume.setValue(100)
@@ -129,6 +132,7 @@ class ControlPanel(QWidget):
         btn_set_unvoiced.clicked.connect(self.set_region_unvoiced.emit)
         btn_set_silence.clicked.connect(self.set_region_silence.emit)
         self.slider_volume.valueChanged.connect(self._on_volume_changed)
+        self.combo_audio_output.currentIndexChanged.connect(self.audio_output_device_changed.emit)
         
     def _on_recompute(self):
         f = float(self.spin_floor.value())
@@ -145,3 +149,11 @@ class ControlPanel(QWidget):
     def _on_volume_changed(self, value):
         self.lbl_volume_value.setText(f"{value}%")
         self.volume_changed.emit(int(value))
+
+    def set_audio_output_devices(self, device_names, current_index=0):
+        self.combo_audio_output.blockSignals(True)
+        self.combo_audio_output.clear()
+        self.combo_audio_output.addItems(device_names)
+        if 0 <= current_index < len(device_names):
+            self.combo_audio_output.setCurrentIndex(current_index)
+        self.combo_audio_output.blockSignals(False)

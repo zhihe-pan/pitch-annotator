@@ -19,7 +19,7 @@ class AudioProcessor:
         self.spec_freqs = None
         self.window_length = 0.005
         self.maximum_frequency = 5000.0
-        self.dynamic_range_db = 50.0
+        self.dynamic_range_db = 70.0
         self.filtered_ac_attenuation_at_top = 0.03
     
     def _maximum_formant_for_file(self):
@@ -52,9 +52,13 @@ class AudioProcessor:
             return
 
         snd = parselmouth.Sound(self.audio_data, self.sr)
-        spectrogram = snd.to_spectrogram(
+        snd_for_spec = snd.copy()
+        snd_for_spec.pre_emphasize(from_frequency=50.0)
+        max_frequency = min(self._maximum_formant_for_file(), self.sr / 2.0)
+        self.maximum_frequency = float(max_frequency)
+        spectrogram = snd_for_spec.to_spectrogram(
             window_length=self.window_length,
-            maximum_frequency=min(self.maximum_frequency, self.sr / 2.0),
+            maximum_frequency=max_frequency,
         )
 
         power = np.maximum(spectrogram.values, np.finfo(float).tiny)
@@ -79,6 +83,7 @@ class AudioProcessor:
         if self.audio_data is None:
             return np.array([]), np.array([]), np.array([], dtype=int), np.array([]), np.array([]), np.array([]), np.array([])
 
+        raw_snd = parselmouth.Sound(self.audio_data, self.sr)
         filtered_audio = self._apply_filtered_ac_lowpass(
             self.audio_data,
             self.sr,
@@ -101,10 +106,9 @@ class AudioProcessor:
         pitch_values = pitch.selected_array['frequency']
         timestamps = pitch.xs()
         segment_labels = self._classify_segments(
-            snd,
+            raw_snd,
             timestamps,
             pitch_values,
-            pitch_floor,
         )
 
         pitch_values[pitch_values == 0] = np.nan
@@ -256,36 +260,79 @@ class AudioProcessor:
         filtered = np.fft.irfft(spectrum * attenuation, n=len(samples))
         return np.asarray(filtered, dtype=float)
 
-    def _classify_segments(self, snd, timestamps, pitch_values, pitch_floor):
+    def _detect_active_intervals(self, snd):
+        """
+        Match the main analysis path in AcousticAnalyses_Parselmouth.py:
+        detect speech intervals on the original timeline first, then classify
+        frames inside those intervals as voiced/unvoiced.
+        """
+        try:
+            pitch_pass1 = parselmouth.praat.call(
+                snd,
+                "To Pitch (raw cross-correlation)",
+                0.005,
+                50,
+                1000,
+                15,
+                "yes",
+                0.03,
+                0.45,
+                0.01,
+                0.35,
+                0.14,
+            )
+            q5_f0 = parselmouth.praat.call(pitch_pass1, "Get quantile", 0, 0, 0.05, "Hertz")
+            if np.isnan(q5_f0) or q5_f0 < 10:
+                q5_f0 = 50.0
+
+            intensity_pass2 = parselmouth.praat.call(snd, "To Intensity", q5_f0, 0.005, "yes")
+            q5_int = parselmouth.praat.call(intensity_pass2, "Get quantile", 0, 0, 0.05)
+            q95_int = parselmouth.praat.call(intensity_pass2, "Get quantile", 0, 0, 0.95)
+            int_sd = parselmouth.praat.call(intensity_pass2, "Get standard deviation", 0, 0)
+            silence_threshold = -((q95_int - q5_int) - (int_sd / 2))
+
+            tg = parselmouth.praat.call(
+                snd,
+                "To TextGrid (silences)",
+                q5_f0,
+                0.005,
+                silence_threshold,
+                0.1,
+                0.1,
+                "silent",
+                "speech",
+            )
+            num_intervals = parselmouth.praat.call(tg, "Get number of intervals", 1)
+            intervals = []
+            for idx in range(1, num_intervals + 1):
+                label = parselmouth.praat.call(tg, "Get label of interval", 1, idx)
+                if label != "speech":
+                    continue
+                start = float(parselmouth.praat.call(tg, "Get start time of interval", 1, idx))
+                end = float(parselmouth.praat.call(tg, "Get end time of interval", 1, idx))
+                if end > start:
+                    intervals.append((start, end))
+            return intervals
+        except Exception:
+            return [(0.0, float(snd.duration))]
+
+    def _classify_segments(self, snd, timestamps, pitch_values):
         if len(timestamps) == 0:
             return np.array([], dtype=int)
 
-        intensity = snd.to_intensity(
-            minimum_pitch=max(50.0, float(pitch_floor)),
-            time_step=self._safe_time_step(timestamps),
-            subtract_mean=True,
-        )
-        intensity_values = np.array([intensity.get_value(t) for t in timestamps], dtype=float)
-        finite_intensity = intensity_values[~np.isnan(intensity_values)]
-        if len(finite_intensity) == 0:
-            return np.full(len(timestamps), SEGMENT_SILENCE, dtype=int)
+        labels = np.full(len(timestamps), SEGMENT_SILENCE, dtype=int)
+        active_intervals = self._detect_active_intervals(snd)
+        if not active_intervals:
+            return labels
 
-        max_intensity = float(np.nanmax(finite_intensity))
-        silence_cutoff = max_intensity - 25.0
-        labels = np.full(len(timestamps), SEGMENT_VOICELESS, dtype=int)
+        active_mask = np.zeros(len(timestamps), dtype=bool)
+        for start, end in active_intervals:
+            active_mask |= (timestamps >= start) & (timestamps <= end)
 
-        silence_mask = np.isnan(intensity_values) | (intensity_values < silence_cutoff)
-        voiced_mask = np.asarray(pitch_values > 0, dtype=bool)
-
-        labels[silence_mask] = SEGMENT_SILENCE
-        labels[~silence_mask & voiced_mask] = SEGMENT_VOICED
+        voiced_mask = active_mask & np.asarray(pitch_values > 0, dtype=bool)
+        labels[active_mask] = SEGMENT_VOICELESS
+        labels[voiced_mask] = SEGMENT_VOICED
         return labels
-
-    @staticmethod
-    def _safe_time_step(timestamps):
-        if len(timestamps) > 1:
-            return max(float(np.median(np.diff(timestamps))), 1e-4)
-        return 0.01
         
     def snap_to_peak(self, target_time, target_freq, freq_window=50.0):
         """

@@ -1,13 +1,13 @@
 import csv
+import math
 import sys
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from PySide6.QtCore import QObject, QThread, Qt, QUrl, Signal, Slot
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot, QStandardPaths, QByteArray, QBuffer, QIODevice, QUrl
+from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QDialog
 
 from backend.acoustic_features import (
@@ -261,8 +261,12 @@ class Controller(QObject):
         self._undo_stack = []
         self._drag_edit_active = False
         self._cleaned_up = False
-        self._clip_temp_path = None
         self._suppress_dirty_tracking = False
+        self._audio_sink = None
+        self._audio_buffer = None
+        self._playback_volume = 1.0
+        self._audio_output_devices = []
+        self._selected_audio_output_index = 0
 
         self.thread = QThread()
         self.worker = ComputeWorker(self.processor)
@@ -308,6 +312,7 @@ class Controller(QObject):
         self.window.control_panel.set_region_unvoiced.connect(self._handle_set_region_unvoiced)
         self.window.control_panel.set_region_silence.connect(self._handle_set_region_silence)
         self.window.control_panel.volume_changed.connect(self._handle_volume_changed)
+        self.window.control_panel.audio_output_device_changed.connect(self._handle_audio_output_device_changed)
 
         self.worker.finished_loading.connect(self._on_loading_finished, Qt.QueuedConnection)
         self.worker.finished_pitch.connect(self._on_pitch_finished, Qt.QueuedConnection)
@@ -318,10 +323,7 @@ class Controller(QObject):
         self.export_worker.error_occurred.connect(self._on_export_error, Qt.QueuedConnection)
 
         self.state.register_callback(self._on_state_changed)
-        self.audio_output = QAudioOutput(self.window)
-        self.audio_output.setVolume(1.0)
-        self.player = QMediaPlayer(self.window)
-        self.player.setAudioOutput(self.audio_output)
+        self._refresh_audio_output_devices()
         self._export_in_progress = False
 
     def _praat_default_params(self):
@@ -345,10 +347,17 @@ class Controller(QObject):
             return
 
         self._save_current_entry_state()
-        self.batch_entries = [BatchAudioEntry(filepath=path, params=dict(params)) for path in filepaths]
-        self.window.set_audio_files(filepaths)
-        self.window.set_current_audio_index(0)
-        self._switch_to_entry(0)
+        existing_paths = {entry.filepath for entry in self.batch_entries}
+        new_paths = [path for path in filepaths if path not in existing_paths]
+        if not new_paths:
+            self.window.statusbar.showMessage("All selected audio files are already in the list.", 3000)
+            return
+
+        first_new_index = len(self.batch_entries)
+        self.batch_entries.extend(BatchAudioEntry(filepath=path, params=dict(params)) for path in new_paths)
+        self.window.set_audio_files([entry.filepath for entry in self.batch_entries])
+        self.window.set_current_audio_index(first_new_index)
+        self._switch_to_entry(first_new_index)
 
     def _choose_open_audio_files(self):
         start_dir = ""
@@ -359,6 +368,7 @@ class Controller(QObject):
         dialog.setFileMode(QFileDialog.ExistingFiles)
         dialog.setAcceptMode(QFileDialog.AcceptOpen)
         dialog.setOption(QFileDialog.DontUseNativeDialog, True)
+        self._configure_file_dialog(dialog, start_dir)
         dialog.setNameFilters(
             [
                 "Audio Files (*.wav *.WAV *.mp3 *.MP3 *.m4a *.M4A *.flac *.FLAC *.aiff *.AIFF *.aif *.AIF *.ogg *.OGG)",
@@ -691,6 +701,7 @@ class Controller(QObject):
         dialog.setAcceptMode(QFileDialog.AcceptSave)
         dialog.setFileMode(QFileDialog.AnyFile)
         dialog.setOption(QFileDialog.DontUseNativeDialog, True)
+        self._configure_file_dialog(dialog, default_path)
         dialog.setNameFilter(file_filter)
         if default_path:
             dialog.selectFile(default_path)
@@ -704,10 +715,46 @@ class Controller(QObject):
         dialog.setFileMode(QFileDialog.Directory)
         dialog.setOption(QFileDialog.ShowDirsOnly, True)
         dialog.setOption(QFileDialog.DontUseNativeDialog, True)
+        self._configure_file_dialog(dialog, start_dir)
         if dialog.exec() != QFileDialog.Accepted:
             return ""
         selected = dialog.selectedFiles()
         return selected[0] if selected else ""
+
+    def _configure_file_dialog(self, dialog, reference_path=""):
+        sidebar_paths = []
+
+        def add_path(path_value):
+            if not path_value:
+                return
+            path = Path(path_value).expanduser()
+            candidate = path if path.is_dir() else path.parent
+            if not candidate.exists():
+                return
+            resolved = str(candidate.resolve())
+            if resolved not in sidebar_paths:
+                sidebar_paths.append(resolved)
+
+        home_dir = Path.home()
+        add_path(home_dir)
+        for location in (
+            QStandardPaths.DesktopLocation,
+            QStandardPaths.DocumentsLocation,
+            QStandardPaths.DownloadLocation,
+            QStandardPaths.MoviesLocation,
+            QStandardPaths.MusicLocation,
+        ):
+            for found_path in QStandardPaths.standardLocations(location):
+                add_path(found_path)
+
+        add_path(Path(__file__).resolve().parent)
+        add_path(reference_path)
+        if 0 <= self.current_entry_index < len(self.batch_entries):
+            add_path(self.batch_entries[self.current_entry_index].filepath)
+
+        if sidebar_paths:
+            dialog.setSidebarUrls([QUrl.fromLocalFile(path) for path in sidebar_paths])
+            dialog.setHistory(sidebar_paths)
 
     def _current_pitch_params(self):
         return {
@@ -861,7 +908,40 @@ class Controller(QObject):
         )
 
     def _handle_volume_changed(self, value):
-        self.audio_output.setVolume(max(0.0, min(1.0, value / 100.0)))
+        self._playback_volume = max(0.0, min(1.0, value / 100.0))
+        if self._audio_sink is not None:
+            self._audio_sink.setVolume(self._playback_volume)
+
+    def _refresh_audio_output_devices(self):
+        self._audio_output_devices = list(QMediaDevices.audioOutputs())
+        default_device = QMediaDevices.defaultAudioOutput()
+        default_id = bytes(default_device.id()) if hasattr(default_device, "id") else b""
+        selected_index = 0
+        device_names = []
+        for idx, device in enumerate(self._audio_output_devices):
+            device_names.append(device.description())
+            device_id = bytes(device.id()) if hasattr(device, "id") else b""
+            if default_id and device_id == default_id:
+                selected_index = idx
+        if not device_names:
+            device_names = ["System Default"]
+            self._selected_audio_output_index = 0
+        else:
+            self._selected_audio_output_index = min(self._selected_audio_output_index, len(device_names) - 1)
+            if self._selected_audio_output_index == 0:
+                self._selected_audio_output_index = selected_index
+        self.window.control_panel.set_audio_output_devices(device_names, self._selected_audio_output_index)
+
+    def _handle_audio_output_device_changed(self, index):
+        if not self._audio_output_devices:
+            self._selected_audio_output_index = 0
+            return
+        self._selected_audio_output_index = max(0, min(int(index), len(self._audio_output_devices) - 1))
+        if self._audio_sink is not None:
+            self.window.statusbar.showMessage(
+                f"Playback device set to {self._audio_output_devices[self._selected_audio_output_index].description()}",
+                3000,
+            )
 
     def _mark_current_entry_dirty(self):
         if self._suppress_dirty_tracking:
@@ -888,11 +968,7 @@ class Controller(QObject):
             self.window.statusbar.showMessage("Selected region is empty.", 3000)
             return
         clip = np.asarray(self.state.audio_data[start_idx:end_idx], dtype=np.float32)
-        self._write_temp_clip(clip, sr)
-        self.player.stop()
-        self.player.setSource(QUrl.fromLocalFile(self._clip_temp_path))
-        self.player.play()
-        self.window.statusbar.showMessage(f"Playing selection {start_time:.3f}s - {end_time:.3f}s", 3000)
+        self._play_clip(clip, sr, f"Playing selection {start_time:.3f}s - {end_time:.3f}s")
 
     def _handle_play_pitch_track(self):
         if self.state.audio_data is None or self.state.sample_rate is None:
@@ -910,11 +986,7 @@ class Controller(QObject):
         if clip is None or len(clip) == 0:
             self.window.statusbar.showMessage("No voiced pitch data in selected region.", 3000)
             return
-        self._write_temp_clip(clip, sr)
-        self.player.stop()
-        self.player.setSource(QUrl.fromLocalFile(self._clip_temp_path))
-        self.player.play()
-        self.window.statusbar.showMessage(f"Playing pitch track {start_time:.3f}s - {end_time:.3f}s", 3000)
+        self._play_clip(clip, sr, f"Playing pitch track {start_time:.3f}s - {end_time:.3f}s")
 
     def _synthesize_pitch_clip(self, start_time, end_time, sample_rate):
         duration = max(0.0, float(end_time - start_time))
@@ -945,16 +1017,66 @@ class Controller(QObject):
             amp_samples[-fade_samples:] *= fade[::-1]
         return waveform.astype(np.float32) * amp_samples
 
-    def _write_temp_clip(self, clip, sr):
-        if self._clip_temp_path:
-            try:
-                Path(self._clip_temp_path).unlink(missing_ok=True)
-            except Exception:
-                pass
-        handle = tempfile.NamedTemporaryFile(prefix="pitch_annotator_clip_", suffix=".wav", delete=False)
-        handle.close()
-        sf.write(handle.name, clip, sr)
-        self._clip_temp_path = handle.name
+    def _play_clip(self, clip, sr, status_message):
+        clip = np.asarray(clip, dtype=np.float32)
+        if clip.size == 0:
+            self.window.statusbar.showMessage("Selected region is empty.", 3000)
+            return
+
+        if self._audio_sink is not None:
+            self._audio_sink.stop()
+            self._audio_sink.deleteLater()
+            self._audio_sink = None
+        if self._audio_buffer is not None:
+            self._audio_buffer.close()
+            self._audio_buffer.deleteLater()
+            self._audio_buffer = None
+
+        if self._audio_output_devices and 0 <= self._selected_audio_output_index < len(self._audio_output_devices):
+            audio_device = self._audio_output_devices[self._selected_audio_output_index]
+        else:
+            audio_device = QMediaDevices.defaultAudioOutput()
+        preferred = audio_device.preferredFormat()
+        out_sr = preferred.sampleRate() if preferred.sampleRate() > 0 else int(sr)
+        out_channels = preferred.channelCount() if preferred.channelCount() > 0 else 2
+        out_format = preferred.sampleFormat()
+
+        if out_sr != int(sr) and out_sr > 0 and clip.size > 1:
+            target_count = max(1, int(math.ceil(len(clip) * out_sr / float(sr))))
+            source_x = np.linspace(0.0, 1.0, num=len(clip), endpoint=False)
+            target_x = np.linspace(0.0, 1.0, num=target_count, endpoint=False)
+            clip = np.interp(target_x, source_x, clip).astype(np.float32)
+
+        clip = np.clip(clip, -1.0, 1.0)
+        if out_channels > 1:
+            samples = np.repeat(clip[:, None], out_channels, axis=1)
+        else:
+            samples = clip[:, None]
+
+        if out_format == QAudioFormat.SampleFormat.UInt8:
+            pcm_bytes = np.asarray((samples * 127.5) + 127.5, dtype=np.uint8).tobytes()
+        elif out_format == QAudioFormat.SampleFormat.Int16:
+            pcm_bytes = np.asarray(samples * 32767.0, dtype=np.int16).tobytes()
+        elif out_format == QAudioFormat.SampleFormat.Int32:
+            pcm_bytes = np.asarray(samples * 2147483647.0, dtype=np.int32).tobytes()
+        else:
+            pcm_bytes = np.asarray(samples, dtype=np.float32).tobytes()
+
+        byte_array = QByteArray(pcm_bytes)
+        buffer = QBuffer(self.window)
+        buffer.setData(byte_array)
+        buffer.open(QIODevice.ReadOnly)
+
+        sink = QAudioSink(audio_device, preferred, self.window)
+        sink.setVolume(self._playback_volume)
+        sink.start(buffer)
+
+        self._audio_buffer = buffer
+        self._audio_sink = sink
+        self.window.statusbar.showMessage(
+            f"{status_message} [{out_sr} Hz, {out_channels} ch]",
+            3000,
+        )
 
     def _on_error(self, err_msg):
         QMessageBox.critical(self.window, "Error", err_msg)
@@ -974,18 +1096,20 @@ class Controller(QObject):
         if self._cleaned_up:
             return
         self._cleaned_up = True
-        self.player.stop()
+        if self._audio_sink is not None:
+            self._audio_sink.stop()
+            self._audio_sink.deleteLater()
+            self._audio_sink = None
+        if self._audio_buffer is not None:
+            self._audio_buffer.close()
+            self._audio_buffer.deleteLater()
+            self._audio_buffer = None
         self.thread.quit()
         self.thread.wait()
         self.thread.deleteLater()
         self.export_thread.quit()
         self.export_thread.wait()
         self.export_thread.deleteLater()
-        if self._clip_temp_path:
-            try:
-                Path(self._clip_temp_path).unlink(missing_ok=True)
-            except Exception:
-                pass
 
 
 def main():
