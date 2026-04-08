@@ -329,10 +329,28 @@ class AudioProcessor:
         for start, end in active_intervals:
             active_mask |= (timestamps >= start) & (timestamps <= end)
 
-        voiced_mask = active_mask & np.asarray(pitch_values > 0, dtype=bool)
-        labels[active_mask] = SEGMENT_VOICELESS
+        intensity = snd.to_intensity(time_step=self._safe_time_step(timestamps))
+        intensity_values = np.array([intensity.get_value(float(t)) for t in timestamps], dtype=float)
+        finite_active_intensity = intensity_values[active_mask & np.isfinite(intensity_values)]
+        if len(finite_active_intensity) > 0:
+            micro_silence_threshold = float(np.nanmax(finite_active_intensity) - 25.0)
+            micro_silence_mask = active_mask & (
+                ~np.isfinite(intensity_values) | (intensity_values < micro_silence_threshold)
+            )
+        else:
+            micro_silence_mask = np.zeros(len(timestamps), dtype=bool)
+
+        active_non_silence_mask = active_mask & ~micro_silence_mask
+        voiced_mask = active_non_silence_mask & np.asarray(pitch_values > 0, dtype=bool)
+        labels[active_non_silence_mask] = SEGMENT_VOICELESS
         labels[voiced_mask] = SEGMENT_VOICED
         return labels
+
+    @staticmethod
+    def _safe_time_step(timestamps):
+        if len(timestamps) > 1:
+            return max(float(np.median(np.diff(timestamps))), 1e-4)
+        return 0.01
         
     def snap_to_peak(self, target_time, target_freq, freq_window=50.0):
         """

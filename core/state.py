@@ -199,12 +199,31 @@ class PitchState:
         self.voice_percent = self._compute_voice_percent()
         self.trigger_update()
 
+    def shift_region_from_base(self, start_time, end_time, delta_hz, base_pitch_values):
+        """
+        Shift all voiced pitch points inside the selected region by delta_hz,
+        starting from a preserved base contour so dragging is stable.
+        """
+        if len(self.timestamps) == 0:
+            return
+        base_values = np.asarray(base_pitch_values, dtype=float)
+        if len(base_values) != len(self.pitch_values):
+            return
+        mask = self._region_mask(start_time, end_time)
+        shifted = np.array(base_values, copy=True)
+        movable_mask = mask & np.isfinite(base_values) & (base_values > 0)
+        if np.any(movable_mask):
+            shifted[movable_mask] = np.maximum(1.0, base_values[movable_mask] + float(delta_hz))
+        self.pitch_values = shifted
+        self.voice_percent = self._compute_voice_percent()
+        self.trigger_update()
+
     def get_quantiles(self):
         """
         Calculate F0 20%, 50%, 80% quantiles for status bar.
-        Ignores unvoiced (NaN) frames.
+        Ignores unvoiced (NaN) and non-positive frames.
         """
-        valid_pitches = self.pitch_values[~np.isnan(self.pitch_values)]
+        valid_pitches = self.pitch_values[np.isfinite(self.pitch_values) & (self.pitch_values > 0)]
         if len(valid_pitches) == 0:
             return 0.0, 0.0, 0.0
         return (

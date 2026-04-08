@@ -260,6 +260,7 @@ class Controller(QObject):
         self._loading_entry_index = -1
         self._undo_stack = []
         self._drag_edit_active = False
+        self._region_shift_context = None
         self._cleaned_up = False
         self._suppress_dirty_tracking = False
         self._audio_sink = None
@@ -304,6 +305,9 @@ class Controller(QObject):
         self.window.canvas.modify_point_requested.connect(self._handle_modify_point)
         self.window.canvas.point_drag_started.connect(self._handle_point_drag_started)
         self.window.canvas.point_drag_finished.connect(self._handle_point_drag_finished)
+        self.window.canvas.region_shift_started.connect(self._handle_region_shift_started)
+        self.window.canvas.region_shift_requested.connect(self._handle_region_shift_requested)
+        self.window.canvas.region_shift_finished.connect(self._handle_region_shift_finished)
         self.window.canvas.selection_changed.connect(self._handle_selection_changed)
 
         self.window.control_panel.recompute_requested.connect(self._handle_recompute)
@@ -607,6 +611,33 @@ class Controller(QObject):
 
     def _handle_point_drag_finished(self):
         self._drag_edit_active = False
+
+    def _handle_region_shift_started(self):
+        if len(self.state.pitch_values) == 0:
+            return
+        region_start, region_end = self.window.canvas.get_selected_region()
+        self._push_undo_state()
+        self._region_shift_context = {
+            "start": float(region_start),
+            "end": float(region_end),
+            "base_pitch_values": np.array(self.state.pitch_values, copy=True),
+        }
+        self._mark_current_entry_dirty()
+
+    def _handle_region_shift_requested(self, delta_hz):
+        if not self._region_shift_context:
+            return
+        self.state.shift_region_from_base(
+            self._region_shift_context["start"],
+            self._region_shift_context["end"],
+            delta_hz,
+            self._region_shift_context["base_pitch_values"],
+        )
+
+    def _handle_region_shift_finished(self):
+        if self._region_shift_context is not None:
+            self.window.statusbar.showMessage("Shifted selected pitch region.", 2000)
+        self._region_shift_context = None
 
     def _handle_set_region_voiced(self):
         r_min, r_max = self.window.canvas.get_selected_region()

@@ -27,13 +27,35 @@ PitchAnnotator 用来查看、校正和导出音高轨迹。
 - macOS：双击 `Start_PitchAnnotator.command`
 - Windows：双击 `Start_PitchAnnotator.bat`
 
-前提是电脑里已经装好 Python 和依赖环境。
+或者按命令行方式启动：
+
+macOS:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+python -m pip install -r requirements.txt
+python main.py
+```
+
+Windows:
+
+```bat
+python -m venv venv
+venv\Scripts\activate
+python -m pip install -r requirements.txt
+python main.py
+```
+
+建议 Python 版本：
+
+- Python 3.11 或 3.12
 
 ## 3. 打开音频
 
 在菜单栏选择：
 
-`File -> Open Audio...`
+`File -> Import Audio Files...`
 
 支持的常见格式包括：
 
@@ -51,15 +73,25 @@ PitchAnnotator 用来查看、校正和导出音高轨迹。
 - 提取初始音高轨迹
 - 显示顶部 segment 条带
 - 显示 F0 20%、50%、80% 分位线
+- 在左侧文件列表中加入该音频
+
+如果一次导入多个音频：
+
+- 左侧会显示文件列表
+- 可以直接点击列表切换
+- 也可以按键盘 `Up / Down` 切换
+- 切换后会保留该音频之前的手动编辑状态
 
 ## 4. 界面怎么看
 
 ### 4.1 中央频谱图
 
 - 横轴：时间
-- 纵轴：频率
+- 左侧纵轴：频率 `Hz`
+- 右侧纵轴：音高 `semitone (st)`
 - 灰度背景：频谱图
 - 蓝色曲线：当前 F0 轨迹
+- 红 / 橙 / 黄点：`F1 / F2 / F3`
 - 蓝色高亮框：当前选择的时间段
 
 ### 4.2 顶部图例
@@ -84,7 +116,7 @@ PitchAnnotator 用来查看、校正和导出音高轨迹。
 
 - `Total`：当前音频总时长
 - `Selection`：当前框选时长
-- `F0 20% / 50% / 80%`
+- `F0 20% / 50% / 80%`，同时显示 `Hz` 和 `st`
 - `Voice%`
 
 其中 `Voice%` 的定义与 `Acoustic_analysis` 保持一致：
@@ -138,6 +170,15 @@ PitchAnnotator 用来查看、校正和导出音高轨迹。
 
 右侧 `Playback` 区域有音量滑块，可以调整播放音量。
 
+### 6.4 选择输出设备
+
+右侧 `Playback` 区域可以选择 `Output Device`。
+
+如果按空格播放没有声音，请先检查：
+
+- 音量不是 `0%`
+- 输出设备是否选对
+
 ## 7. 手动编辑音高
 
 ### 7.1 增加一个音高点
@@ -152,7 +193,7 @@ PitchAnnotator 用来查看、校正和导出音高轨迹。
 
 按住：
 
-`Shift + 左键`
+`Alt + Shift + 左键`
 
 点击目标点附近，会把最近的一个点删掉，变成 unvoiced。
 
@@ -162,7 +203,17 @@ PitchAnnotator 用来查看、校正和导出音高轨迹。
 
 然后拖拽这个点，就可以修改它的频率位置。
 
-### 7.4 撤销
+### 7.4 平移一整段选中的音高轨迹
+
+1. 先框选一个时间区间
+2. 程序会把这个区间内的有效 pitch 点高亮出来
+3. 把鼠标放到这些高亮点上
+4. 按住 `Shift`
+5. 左键上下拖拽
+
+这样会把该区间内所有高亮的 pitch 点整体上下平移。
+
+### 7.5 撤销
 
 按：
 
@@ -240,8 +291,11 @@ PitchAnnotator 用来查看、校正和导出音高轨迹。
 
 内容包括：
 
+- 音频文件名
+- pitch 提取参数
 - 时间
 - 频率
+- segment label
 
 ### 10.2 Export Praat .Pitch...
 
@@ -261,7 +315,25 @@ PitchAnnotator 用来查看、校正和导出音高轨迹。
 - 高频能量比例
 - 谱斜率等
 
-### 10.4 Export All...
+如果你手动修改了：
+
+- `Silence / Voiceless / Voiced` 区间
+- pitch 点
+- 选区内整体平移后的 F0
+
+那么导出时会尽量按你最终编辑后的状态重算相关指标。
+
+### 10.4 Export Batch Acoustic Features CSV...
+
+如果左侧已经导入了多个音频，可以导出一个批量 CSV。
+
+这个文件会包含：
+
+- 每个音频一行
+- 每行对应一个音频最终编辑后的 acoustic features
+- 同时附带该音频使用的 pitch 提取参数
+
+### 10.5 Export All...
 
 快捷键：
 
@@ -326,5 +398,6 @@ PitchAnnotator 用来查看、校正和导出音高轨迹。
 3. 框选问题区间
 4. 用 `Space` 听原音
 5. 用 `Shift + Space` 听 pitch 轨迹
-6. 通过加点、删点、拖点或改 segment 修正
-7. 导出 pitch CSV / Praat Pitch / Acoustic Features CSV
+6. 通过加点、删点、拖点、整段平移或改 segment 修正
+7. 左侧切换到下一条音频继续检查
+8. 最后导出 pitch CSV / Praat Pitch / Acoustic Features CSV / Batch Acoustic Features CSV

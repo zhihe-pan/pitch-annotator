@@ -1,4 +1,5 @@
 from pathlib import Path
+import math
 
 from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout,
                                QVBoxLayout, QListWidget, QListWidgetItem,
@@ -7,6 +8,13 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from ui.canvas import PitchCanvas
 from ui.control_panel import ControlPanel
+
+
+def hz_to_semitone(freq_hz: float) -> float:
+    if freq_hz <= 0:
+        return float("nan")
+    return 12.0 * math.log2(freq_hz / 27.5)
+
 
 class MainWindow(QMainWindow):
     open_audio_requested = Signal()
@@ -130,7 +138,15 @@ class MainWindow(QMainWindow):
         self.shortcut_export_all.activated.connect(self.export_all_requested.emit)
 
     def update_stats(self, p20, p50, p80, voice_percent):
-        self.lbl_stats.setText(f"F0 20%: {p20:.1f}Hz | 50%: {p50:.1f}Hz | 80%: {p80:.1f}Hz")
+        p20_st = hz_to_semitone(float(p20))
+        p50_st = hz_to_semitone(float(p50))
+        p80_st = hz_to_semitone(float(p80))
+        self.lbl_stats.setText(
+            "F0 "
+            f"20%: {p20:.1f}Hz ({p20_st:.1f}st) | "
+            f"50%: {p50:.1f}Hz ({p50_st:.1f}st) | "
+            f"80%: {p80:.1f}Hz ({p80_st:.1f}st)"
+        )
         self.lbl_voice.setText(f"Voice%: {voice_percent:.1f}")
 
     def update_durations(self, total_duration, selection_duration):

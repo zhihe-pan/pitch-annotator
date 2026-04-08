@@ -4,15 +4,34 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
 from PySide6.QtCore import Qt, Signal, QRectF
 from PySide6.QtGui import QCursor, QColor, QPen, QBrush
 
+
+class SemitoneAxisItem(pg.AxisItem):
+    def tickStrings(self, values, scale, spacing):
+        labels = []
+        for value in values:
+            freq_hz = float(value)
+            if freq_hz <= 0:
+                labels.append("")
+                continue
+            semitone = 12.0 * np.log2(freq_hz / 27.5)
+            labels.append(f"{semitone:.1f}")
+        return labels
+
+
 class SelectionViewBox(pg.ViewBox):
-    def __init__(self, selection_callback, point_drag_callback, zoom_anchor_callback, *args, **kwargs):
+    def __init__(self, selection_callback, point_drag_callback, region_shift_callback, zoom_anchor_callback, *args, **kwargs):
         super().__init__(*args, enableMenu=False, **kwargs)
         self.selection_callback = selection_callback
         self.point_drag_callback = point_drag_callback
+        self.region_shift_callback = region_shift_callback
         self.zoom_anchor_callback = zoom_anchor_callback
         self.setMouseMode(pg.ViewBox.PanMode)
 
     def mouseDragEvent(self, ev, axis=None):
+        if ev.button() == Qt.LeftButton and ev.modifiers() == Qt.ShiftModifier:
+            self.region_shift_callback(ev)
+            ev.accept()
+            return
         if ev.button() == Qt.LeftButton and ev.modifiers() == Qt.NoModifier:
             if self.point_drag_callback(ev):
                 ev.accept()
@@ -50,6 +69,9 @@ class PitchCanvas(QWidget):
     modify_point_requested = Signal(float, float) # time, new_freq
     point_drag_started = Signal()
     point_drag_finished = Signal()
+    region_shift_started = Signal()
+    region_shift_requested = Signal(float)
+    region_shift_finished = Signal()
     selection_changed = Signal(float, float)
     
     set_region_voiced_requested = Signal(float, float) # start_time, end_time
@@ -71,22 +93,28 @@ class PitchCanvas(QWidget):
         self.layout.addWidget(self.legend_widget)
 
         # Main pyqtgraph PlotWidget
+        self.semitone_axis = SemitoneAxisItem(orientation='right')
         self.plot_widget = pg.PlotWidget(
+            axisItems={'right': self.semitone_axis},
             viewBox=SelectionViewBox(
                 self._update_drag_selection,
                 self._handle_point_drag,
+                self._handle_region_shift_drag,
                 self._get_zoom_anchor_y,
             )
         )
         self.layout.addWidget(self.plot_widget)
         self.plot_widget.setBackground('w')
         self.plot_widget.showGrid(x=False, y=False)
+        self.plot_widget.showAxis('right')
         self.vb = self.plot_widget.getViewBox()
         self.vb.setDefaultPadding(0.0)
         self.plot_widget.setLimits(xMin=0.0)
         self.plot_widget.setXRange(0.0, 1.0, padding=0)
         self.plot_widget.setYRange(0.0, 1000.0, padding=0)
         self.plot_widget.setCursor(Qt.IBeamCursor)
+        self.semitone_axis.linkToView(self.vb)
+        self.vb.sigRangeChanged.connect(self._handle_view_range_changed)
 
         # Spectrogram Image
         self.img_item = pg.ImageItem()
@@ -108,6 +136,12 @@ class PitchCanvas(QWidget):
             brush=pg.mkBrush("#ffcc00"),
         )
         self.plot_widget.addItem(self.selected_point_item)
+        self.selected_region_points_item = pg.ScatterPlotItem(
+            size=9,
+            pen=pg.mkPen("#0f3d91", width=1.2),
+            brush=pg.mkBrush(70, 140, 255, 170),
+        )
+        self.plot_widget.addItem(self.selected_region_points_item)
         self.f1_item = pg.ScatterPlotItem(size=6, pen=pg.mkPen("#b91c1c", width=0.8), brush=pg.mkBrush("#ef4444"))
         self.f2_item = pg.ScatterPlotItem(size=6, pen=pg.mkPen("#c2410c", width=0.8), brush=pg.mkBrush("#fb923c"))
         self.f3_item = pg.ScatterPlotItem(size=6, pen=pg.mkPen("#a16207", width=0.8), brush=pg.mkBrush("#facc15"))
@@ -125,6 +159,7 @@ class PitchCanvas(QWidget):
         
         # Region selection
         self.region_item = pg.LinearRegionItem(values=[0, 1], movable=True)
+        self.region_item.setMovable(False)
         self.region_item.setZValue(10)
         self.region_item.hide() # Hidden by default
         self.region_item.sigRegionChanged.connect(self._emit_region_changed)
@@ -144,10 +179,14 @@ class PitchCanvas(QWidget):
         self.dragging_point_time = None
         self.dragging_point_index = None
         self.selected_point_index = None
+        self.selected_region_indices = np.array([], dtype=int)
+        self.region_shift_active = False
         self._cached_timestamps = np.array([])
         self._cached_pitch_values = np.array([])
         self.segment_items = []
+        self._segment_spans = []
         self.audio_end_time = 1.0
+        self.segment_band_fraction = 0.045
         self.segment_color_map = {
             0: QColor(255, 210, 80, 200),   # silence
             1: QColor(90, 90, 90, 200),     # voiceless
@@ -158,10 +197,13 @@ class PitchCanvas(QWidget):
         # Axis labels
         self.plot_widget.setLabel('bottom', 'Time', units='s')
         self.plot_widget.setLabel('left', 'Frequency', units='Hz')
+        self.semitone_axis.setLabel('Pitch', units='st')
         self.plot_widget.getAxis('bottom').setTextPen('k')
         self.plot_widget.getAxis('bottom').setPen('k')
         self.plot_widget.getAxis('left').setTextPen('k')
         self.plot_widget.getAxis('left').setPen('k')
+        self.semitone_axis.setTextPen('k')
+        self.semitone_axis.setPen('k')
         self.region_item.setBrush(QBrush(QColor(30, 100, 255, 45)))
         self.region_item.setHoverBrush(QBrush(QColor(30, 100, 255, 70)))
         for line in self.region_item.lines:
@@ -246,12 +288,14 @@ class PitchCanvas(QWidget):
             self._emit_region_changed()
         else:
             self.region_item.hide()
+            self._update_selected_region_visual()
             
     def get_selected_region(self):
         return self.region_item.getRegion()
 
     def _emit_region_changed(self):
         start, end = self.region_item.getRegion()
+        self._update_selected_region_visual()
         self.selection_changed.emit(float(start), float(end))
 
     def _clamp_time(self, time_value):
@@ -266,11 +310,17 @@ class PitchCanvas(QWidget):
         self.region_item.show()
         self.selection_changed.emit(start, end)
 
-    def _find_point_near_scene_pos(self, scene_pos, max_distance_px=10.0):
+    def _find_point_near_scene_pos(self, scene_pos, max_distance_px=10.0, candidate_indices=None):
         valid_mask = ~np.isnan(self._cached_pitch_values)
         if len(self._cached_timestamps) == 0 or not np.any(valid_mask):
             return None
-        candidate_indices = np.flatnonzero(valid_mask)
+        if candidate_indices is None:
+            candidate_indices = np.flatnonzero(valid_mask)
+        else:
+            candidate_indices = np.asarray(candidate_indices, dtype=int)
+            candidate_indices = candidate_indices[valid_mask[candidate_indices]]
+        if len(candidate_indices) == 0:
+            return None
         nearest_idx = None
         nearest_dist = None
         for idx in candidate_indices:
@@ -298,6 +348,30 @@ class PitchCanvas(QWidget):
             [float(self._cached_pitch_values[idx])],
         )
 
+    def _get_selected_region_indices(self):
+        if not self.region_item.isVisible() or len(self._cached_timestamps) == 0:
+            return np.array([], dtype=int)
+        region_start, region_end = self.region_item.getRegion()
+        region_min = min(region_start, region_end)
+        region_max = max(region_start, region_end)
+        mask = (
+            (self._cached_timestamps >= region_min)
+            & (self._cached_timestamps <= region_max)
+            & np.isfinite(self._cached_pitch_values)
+            & (self._cached_pitch_values > 0)
+        )
+        return np.flatnonzero(mask)
+
+    def _update_selected_region_visual(self):
+        self.selected_region_indices = self._get_selected_region_indices()
+        if len(self.selected_region_indices) == 0:
+            self.selected_region_points_item.setData([], [])
+            return
+        self.selected_region_points_item.setData(
+            self._cached_timestamps[self.selected_region_indices],
+            self._cached_pitch_values[self.selected_region_indices],
+        )
+
     def _handle_point_drag(self, ev):
         start_idx = self._find_point_near_scene_pos(ev.buttonDownScenePos())
         if start_idx is None and self.dragging_point_index is None:
@@ -315,6 +389,34 @@ class PitchCanvas(QWidget):
         if ev.isFinish():
             self.dragging_point_index = None
             self.point_drag_finished.emit()
+        return True
+
+    def _handle_region_shift_drag(self, ev):
+        if not self.region_item.isVisible() or len(self._cached_timestamps) == 0:
+            return False
+
+        start_view = self.vb.mapSceneToView(ev.buttonDownScenePos())
+        if not self.region_shift_active:
+            start_idx = self._find_point_near_scene_pos(
+                ev.buttonDownScenePos(),
+                max_distance_px=12.0,
+                candidate_indices=self.selected_region_indices,
+            )
+            if start_idx is None:
+                return False
+        current_view = self.vb.mapSceneToView(ev.scenePos())
+        if len(self.selected_region_indices) == 0:
+            return False
+
+        if not self.region_shift_active:
+            self.region_shift_active = True
+            self.region_shift_started.emit()
+
+        delta_hz = float(current_view.y() - start_view.y())
+        self.region_shift_requested.emit(delta_hz)
+        if ev.isFinish():
+            self.region_shift_active = False
+            self.region_shift_finished.emit()
         return True
 
     def _get_zoom_anchor_y(self, anchor_x):
@@ -361,16 +463,10 @@ class PitchCanvas(QWidget):
         for item in self.segment_items:
             self.plot_widget.removeItem(item)
         self.segment_items.clear()
+        self._segment_spans = []
 
         if len(timestamps) == 0 or len(segment_labels) == 0:
             return
-
-        view_range = self.vb.viewRange()
-        y_min, y_max = view_range[1]
-        if y_max <= y_min:
-            y_min, y_max = 0.0, 1.0
-        band_height = max((y_max - y_min) * 0.035, 40.0)
-        band_bottom = y_max - band_height
 
         if len(timestamps) > 1:
             step = float(np.median(np.diff(timestamps)))
@@ -393,13 +489,29 @@ class PitchCanvas(QWidget):
                 x1 = self.audio_end_time
             x0 = max(0.0, x0)
             x1 = min(self.audio_end_time, x1)
-            rect = QGraphicsRectItem(QRectF(x0, band_bottom, x1 - x0, band_height))
+            rect = QGraphicsRectItem(QRectF(x0, 0.0, max(0.0, x1 - x0), 1.0))
             rect.setPen(QPen(Qt.NoPen))
             rect.setBrush(QBrush(self.segment_color_map.get(label, QColor(0, 0, 0, 0))))
             rect.setZValue(8)
             self.plot_widget.addItem(rect)
             self.segment_items.append(rect)
+            self._segment_spans.append((rect, x0, x1))
             start_idx = end_idx
+        self._refresh_segment_band_positions()
+
+    def _refresh_segment_band_positions(self):
+        if not self._segment_spans:
+            return
+        _, y_range = self.vb.viewRange()
+        y_min, y_max = float(y_range[0]), float(y_range[1])
+        y_span = max(1.0, y_max - y_min)
+        band_height = y_span * self.segment_band_fraction
+        band_bottom = y_max - band_height
+        for rect, x0, x1 in self._segment_spans:
+            rect.setRect(QRectF(x0, band_bottom, max(0.0, x1 - x0), band_height))
+
+    def _handle_view_range_changed(self, *_args):
+        self._refresh_segment_band_positions()
 
     def update_pitch(self, timestamps, pitch_values):
         """
@@ -409,6 +521,7 @@ class PitchCanvas(QWidget):
         self._cached_pitch_values = np.asarray(pitch_values, dtype=float)
         self.pitch_item.setData(x=timestamps, y=pitch_values)
         self._update_selected_point_visual()
+        self._update_selected_region_visual()
 
     def update_formants(self, formant_times, f1_values, f2_values, f3_values):
         formant_times = np.asarray(formant_times, dtype=float)
@@ -457,6 +570,7 @@ class PitchCanvas(QWidget):
                 event.accept()
                 return
             self.region_item.hide()
+            self._update_selected_region_visual()
             self.selection_changed.emit(0.0, 0.0)
             event.accept()
             return
@@ -467,8 +581,8 @@ class PitchCanvas(QWidget):
             event.accept()
             return
             
-        # Shift + Click: Remove point
-        if event.modifiers() == Qt.ShiftModifier and event.button() == Qt.LeftButton:
+        # Alt + Shift + Click: Remove point
+        if event.modifiers() == (Qt.AltModifier | Qt.ShiftModifier) and event.button() == Qt.LeftButton:
             self.remove_point_requested.emit(t)
             event.accept()
             return
