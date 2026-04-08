@@ -1,5 +1,6 @@
 import csv
 import math
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,7 +29,7 @@ class BatchAudioEntry:
     state_snapshot: dict | None = None
     spectrogram_cache: dict | None = None
     selection_region: tuple[float, float] = (0.0, 0.25)
-    region_visible: bool = True
+    region_visible: bool = False
     acoustic_row: dict | None = None
     dirty: bool = False
 
@@ -153,6 +154,39 @@ class ExportWorker(QObject):
     finished = Signal(str)
     error_occurred = Signal(str)
 
+    @staticmethod
+    def _resolve_pitch_payload(entry):
+        timestamps = np.asarray(entry.get("timestamps", np.array([])), dtype=float)
+        pitch_values = np.asarray(entry.get("pitch_values", np.array([])), dtype=float)
+        segment_labels = np.asarray(entry.get("segment_labels", np.array([])), dtype=int)
+        if len(timestamps) > 0 and len(pitch_values) > 0 and len(segment_labels) == len(pitch_values):
+            return {
+                **entry,
+                "timestamps": timestamps,
+                "pitch_values": pitch_values,
+                "segment_labels": segment_labels,
+            }
+
+        pitch_params = dict(entry["pitch_params"])
+        processor = AudioProcessor()
+        processor.load_audio(entry["audio_path"])
+        timestamps, pitch_values, segment_labels, *_ = processor.extract_pitch(
+            float(pitch_params.get("pitch_floor", 50.0)),
+            float(pitch_params.get("pitch_ceiling", 800.0)),
+            float(pitch_params.get("time_step", 0.0)),
+            float(pitch_params.get("voicing_threshold", 0.50)),
+            float(pitch_params.get("silence_threshold", 0.09)),
+            float(pitch_params.get("octave_cost", 0.055)),
+            float(pitch_params.get("octave_jump_cost", 0.35)),
+            float(pitch_params.get("voiced_unvoiced_cost", 0.14)),
+        )
+        return {
+            **entry,
+            "timestamps": np.asarray(timestamps, dtype=float),
+            "pitch_values": np.asarray(pitch_values, dtype=float),
+            "segment_labels": np.asarray(segment_labels, dtype=int),
+        }
+
     @Slot(object)
     def run_task(self, task):
         try:
@@ -192,12 +226,13 @@ class ExportWorker(QObject):
             if task_type == "batch_acoustic_csv":
                 rows = []
                 for entry in task["entries"]:
+                    resolved = self._resolve_pitch_payload(entry)
                     row = compute_feature_row_with_pitch_overrides(
-                        entry["audio_path"],
-                        entry["pitch_params"],
-                        entry["timestamps"],
-                        entry["pitch_values"],
-                        entry["segment_labels"],
+                        resolved["audio_path"],
+                        resolved["pitch_params"],
+                        resolved["timestamps"],
+                        resolved["pitch_values"],
+                        resolved["segment_labels"],
                     )
                     rows.append(row)
 
@@ -212,6 +247,25 @@ class ExportWorker(QObject):
                     writer.writeheader()
                     writer.writerows(rows)
                 self.finished.emit(f"Exported batch acoustic features to {task['filepath']}")
+                return
+
+            if task_type == "batch_pitch_csv":
+                selected_dir = Path(task["output_dir"])
+                output_dir = selected_dir if selected_dir.name == "pitch_csv" else selected_dir / "pitch_csv"
+                output_dir.mkdir(parents=True, exist_ok=True)
+                for entry in task["entries"]:
+                    resolved = self._resolve_pitch_payload(entry)
+                    audio_path = Path(resolved["audio_path"])
+                    filepath = output_dir / f"{audio_path.stem}_pitch.csv"
+                    export_csv(
+                        str(filepath),
+                        resolved["timestamps"],
+                        resolved["pitch_values"],
+                        pitch_params=resolved["pitch_params"],
+                        audio_path=resolved["audio_path"],
+                        segment_labels=resolved["segment_labels"],
+                    )
+                self.finished.emit(f"Exported batch pitch CSVs to {output_dir}")
                 return
 
             if task_type == "export_all":
@@ -236,6 +290,52 @@ class ExportWorker(QObject):
                     writer.writeheader()
                     writer.writerow(row)
                 self.finished.emit(f"Exported all files to {task['output_dir']}")
+                return
+
+            if task_type == "batch_export_all":
+                selected_dir = Path(task["output_dir"])
+                pitch_output_dir = selected_dir if selected_dir.name == "pitch_csv" else selected_dir / "pitch_csv"
+                pitch_output_dir.mkdir(parents=True, exist_ok=True)
+
+                rows = []
+                for entry in task["entries"]:
+                    resolved = self._resolve_pitch_payload(entry)
+                    audio_path = Path(resolved["audio_path"])
+                    pitch_csv_path = pitch_output_dir / f"{audio_path.stem}_pitch.csv"
+                    export_csv(
+                        str(pitch_csv_path),
+                        resolved["timestamps"],
+                        resolved["pitch_values"],
+                        pitch_params=resolved["pitch_params"],
+                        audio_path=resolved["audio_path"],
+                        segment_labels=resolved["segment_labels"],
+                    )
+                    rows.append(
+                        compute_feature_row_with_pitch_overrides(
+                            resolved["audio_path"],
+                            resolved["pitch_params"],
+                            resolved["timestamps"],
+                            resolved["pitch_values"],
+                            resolved["segment_labels"],
+                        )
+                    )
+
+                preferred = ["audio_file"] + PARAMETER_COLUMNS
+                fieldnames = list(preferred)
+                for row in rows:
+                    for key in row.keys():
+                        if key not in fieldnames:
+                            fieldnames.append(key)
+
+                acoustic_csv_path = Path(task["acoustic_csv_path"])
+                with open(acoustic_csv_path, "w", newline="", encoding="utf-8") as handle:
+                    writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(rows)
+
+                self.finished.emit(
+                    f"Exported batch pitch CSVs to {pitch_output_dir} and acoustic features to {acoustic_csv_path}"
+                )
                 return
 
             raise ValueError(f"Unknown export task type: {task_type}")
@@ -268,6 +368,7 @@ class Controller(QObject):
         self._playback_volume = 1.0
         self._audio_output_devices = []
         self._selected_audio_output_index = 0
+        self._pending_export_task = None
 
         self.thread = QThread()
         self.worker = ComputeWorker(self.processor)
@@ -292,9 +393,11 @@ class Controller(QObject):
         self.window.next_audio_requested.connect(self._handle_next_audio)
         self.window.previous_audio_requested.connect(self._handle_previous_audio)
         self.window.export_csv_requested.connect(self._handle_export_csv)
+        self.window.batch_export_pitch_csv_requested.connect(self._handle_batch_export_pitch_csv)
         self.window.export_praat_requested.connect(self._handle_export_praat)
         self.window.export_acoustic_csv_requested.connect(self._handle_export_acoustic_csv)
         self.window.batch_export_acoustic_csv_requested.connect(self._handle_batch_export_acoustic_csv)
+        self.window.batch_export_all_requested.connect(self._handle_batch_export_all)
         self.window.export_all_requested.connect(self._handle_export_all)
         self.window.play_selection_requested.connect(self._handle_play_selection)
         self.window.play_pitch_track_requested.connect(self._handle_play_pitch_track)
@@ -317,6 +420,7 @@ class Controller(QObject):
         self.window.control_panel.set_region_silence.connect(self._handle_set_region_silence)
         self.window.control_panel.volume_changed.connect(self._handle_volume_changed)
         self.window.control_panel.audio_output_device_changed.connect(self._handle_audio_output_device_changed)
+        self.window.close_handler = self._confirm_close
 
         self.worker.finished_loading.connect(self._on_loading_finished, Qt.QueuedConnection)
         self.worker.finished_pitch.connect(self._on_pitch_finished, Qt.QueuedConnection)
@@ -727,6 +831,24 @@ class Controller(QObject):
         audio_path = Path(self.batch_entries[self.current_entry_index].filepath).resolve()
         return str(audio_path.with_name(f"{audio_path.stem}{suffix}"))
 
+    def _default_batch_acoustic_filename(self):
+        if not self.batch_entries:
+            return "batch_acoustic_features.csv"
+        first_audio = Path(self.batch_entries[0].filepath).resolve()
+        stem = first_audio.stem
+        sub_match = re.search(r"(sub\d+)", stem, re.IGNORECASE)
+        voice_match = re.search(r"\b(SP|NV)\b", stem, re.IGNORECASE)
+        if voice_match is None:
+            voice_match = re.search(r"_(SP|NV)(?:_|$)", stem, re.IGNORECASE)
+        parts = []
+        if sub_match:
+            parts.append(sub_match.group(1))
+        if voice_match:
+            parts.append(voice_match.group(1).upper())
+        if parts:
+            return f"{'_'.join(parts)}_acoustic_features.csv"
+        return "batch_acoustic_features.csv"
+
     def _choose_save_file(self, title, default_path, file_filter):
         dialog = QFileDialog(self.window, title, default_path)
         dialog.setAcceptMode(QFileDialog.AcceptSave)
@@ -844,6 +966,7 @@ class Controller(QObject):
             self.window.statusbar.showMessage("An export is already running. Please wait.", 3000)
             return
         self._export_in_progress = True
+        self._pending_export_task = dict(task)
         self.window.statusbar.showMessage(start_message)
         self.request_export.emit(task)
 
@@ -878,6 +1001,25 @@ class Controller(QObject):
                 "Exporting Praat Pitch in background...",
             )
 
+    def _handle_batch_export_pitch_csv(self):
+        if not self.batch_entries:
+            self.window.statusbar.showMessage("No audio files imported.", 3000)
+            return
+        default_dir = str(Path(self.batch_entries[0].filepath).resolve().parent)
+        output_dir = self._choose_directory("Export Batch Pitch CSVs", default_dir)
+        if not output_dir:
+            return
+        self._save_current_entry_state()
+        entries = [self._entry_export_payload(entry) for entry in self.batch_entries]
+        self._start_export_task(
+            {
+                "type": "batch_pitch_csv",
+                "output_dir": output_dir,
+                "entries": entries,
+            },
+            f"Exporting batch pitch CSVs for {len(entries)} files in background...",
+        )
+
     def _handle_export_acoustic_csv(self):
         if self.current_entry_index < 0:
             self.window.statusbar.showMessage("No audio loaded.", 3000)
@@ -900,7 +1042,7 @@ class Controller(QObject):
         if not self.batch_entries:
             self.window.statusbar.showMessage("No audio files imported.", 3000)
             return
-        default_parent = str(Path(self.batch_entries[0].filepath).resolve().parent / "batch_acoustic_features.csv")
+        default_parent = str(Path(self.batch_entries[0].filepath).resolve().parent / self._default_batch_acoustic_filename())
         filepath = self._choose_save_file("Export Batch Acoustic Features CSV", default_parent, "CSV Files (*.csv)")
         if not filepath:
             return
@@ -913,6 +1055,27 @@ class Controller(QObject):
                 "entries": entries,
             },
             f"Exporting batch acoustic features for {len(entries)} files in background...",
+        )
+
+    def _handle_batch_export_all(self):
+        if not self.batch_entries:
+            self.window.statusbar.showMessage("No audio files imported.", 3000)
+            return
+        default_filepath = str(Path(self.batch_entries[0].filepath).resolve().parent / self._default_batch_acoustic_filename())
+        acoustic_filepath = self._choose_save_file("Export Batch All", default_filepath, "CSV Files (*.csv)")
+        if not acoustic_filepath:
+            return
+        self._save_current_entry_state()
+        entries = [self._entry_export_payload(entry) for entry in self.batch_entries]
+        acoustic_path = Path(acoustic_filepath)
+        self._start_export_task(
+            {
+                "type": "batch_export_all",
+                "output_dir": str(acoustic_path.parent),
+                "acoustic_csv_path": str(acoustic_path),
+                "entries": entries,
+            },
+            f"Exporting batch pitch CSVs and acoustic features for {len(entries)} files in background...",
         )
 
     def _handle_export_all(self):
@@ -983,6 +1146,51 @@ class Controller(QObject):
         if not entry.dirty:
             entry.dirty = True
             self.window.update_audio_file_entry(self.current_entry_index, entry.filepath, True)
+
+    def _mark_entries_clean(self, indices):
+        for index in indices:
+            if index < 0 or index >= len(self.batch_entries):
+                continue
+            entry = self.batch_entries[index]
+            if entry.dirty:
+                entry.dirty = False
+                self.window.update_audio_file_entry(index, entry.filepath, False)
+
+    def _handle_successful_export(self):
+        if not self._pending_export_task:
+            return
+        task_type = self._pending_export_task.get("type")
+        if task_type in {"pitch_csv", "praat_pitch", "acoustic_csv", "export_all"}:
+            if self.current_entry_index >= 0:
+                self._mark_entries_clean([self.current_entry_index])
+            return
+        if task_type in {"batch_pitch_csv", "batch_acoustic_csv", "batch_export_all"}:
+            self._mark_entries_clean(list(range(len(self.batch_entries))))
+
+    def _confirm_close(self):
+        if not self.batch_entries and self.state.audio_path is None:
+            return True
+        dirty_entries = [entry for entry in self.batch_entries if entry.dirty]
+        if dirty_entries:
+            message = (
+                "还有未导出的修改。\n\n"
+                "如果现在关闭程序，这些修改会丢失。\n\n"
+                "你确认已经导出并且仍要退出吗？"
+            )
+        else:
+            message = (
+                "你已经导入了音频文件。\n\n"
+                "如果还没有导出需要的结果，现在关闭程序后本次会话的数据不会保留。\n\n"
+                "你确认已经导出并且仍要退出吗？"
+            )
+        reply = QMessageBox.warning(
+            self.window,
+            "未导出的修改",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
 
     def _handle_play_selection(self):
         if self.state.audio_data is None or self.state.sample_rate is None:
@@ -1116,10 +1324,13 @@ class Controller(QObject):
 
     def _on_export_finished(self, message):
         self._export_in_progress = False
+        self._handle_successful_export()
+        self._pending_export_task = None
         self.window.statusbar.showMessage(message, 4000)
 
     def _on_export_error(self, err_msg):
         self._export_in_progress = False
+        self._pending_export_task = None
         QMessageBox.critical(self.window, "Export Error", err_msg)
         self.window.statusbar.showMessage("Export failed.", 4000)
 

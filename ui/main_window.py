@@ -19,6 +19,8 @@ def hz_to_semitone(freq_hz: float) -> float:
 class MainWindow(QMainWindow):
     open_audio_requested = Signal()
     batch_export_acoustic_csv_requested = Signal()
+    batch_export_pitch_csv_requested = Signal()
+    batch_export_all_requested = Signal()
     export_csv_requested = Signal()
     export_praat_requested = Signal()
     export_acoustic_csv_requested = Signal()
@@ -32,6 +34,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        self.close_handler = None
         self.setWindowTitle("Pitch Annotator")
         self.resize(1200, 800)
         
@@ -100,6 +103,9 @@ class MainWindow(QMainWindow):
         
         action_export_csv = file_menu.addAction("Export CSV...")
         action_export_csv.triggered.connect(self.export_csv_requested.emit)
+
+        action_export_batch_pitch = file_menu.addAction("Export Batch Pitch CSVs...")
+        action_export_batch_pitch.triggered.connect(self.batch_export_pitch_csv_requested.emit)
         
         action_export_praat = file_menu.addAction("Export Praat .Pitch...")
         action_export_praat.triggered.connect(self.export_praat_requested.emit)
@@ -109,6 +115,9 @@ class MainWindow(QMainWindow):
 
         action_export_batch_acoustic = file_menu.addAction("Export Batch Acoustic Features CSV...")
         action_export_batch_acoustic.triggered.connect(self.batch_export_acoustic_csv_requested.emit)
+
+        action_export_batch_all = file_menu.addAction("Export Batch All...")
+        action_export_batch_all.triggered.connect(self.batch_export_all_requested.emit)
 
         action_export_all = file_menu.addAction("Export All...")
         action_export_all.triggered.connect(self.export_all_requested.emit)
@@ -136,6 +145,8 @@ class MainWindow(QMainWindow):
         self.shortcut_previous_audio.activated.connect(self.previous_audio_requested.emit)
         self.shortcut_export_all = QShortcut(QKeySequence("Ctrl+Shift+E"), self)
         self.shortcut_export_all.activated.connect(self.export_all_requested.emit)
+        self.shortcut_batch_export_all = QShortcut(QKeySequence("Ctrl+Alt+Shift+E"), self)
+        self.shortcut_batch_export_all.activated.connect(self.batch_export_all_requested.emit)
 
     def update_stats(self, p20, p50, p80, voice_percent):
         p20_st = hz_to_semitone(float(p20))
@@ -179,3 +190,9 @@ class MainWindow(QMainWindow):
         item = self.audio_list.item(index)
         item.setText(label)
         item.setToolTip(filepath)
+
+    def closeEvent(self, event):
+        if self.close_handler is not None and not self.close_handler():
+            event.ignore()
+            return
+        super().closeEvent(event)

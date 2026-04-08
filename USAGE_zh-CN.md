@@ -51,6 +51,8 @@ python main.py
 
 - Python 3.11 或 3.12
 
+项目根目录下已经准备了一个 `output/` 文件夹，建议把导出的 pitch csv、Praat Pitch 和 acoustic features 都统一放到这里。
+
 ## 3. 打开音频
 
 在菜单栏选择：
@@ -297,11 +299,32 @@ python main.py
 - 频率
 - segment label
 
-### 10.2 Export Praat .Pitch...
+### 10.2 Export Batch Pitch CSVs...
+
+如果左侧已经导入了多个音频，可以一次性批量导出所有音频的 pitch 轨迹 csv。
+
+使用方法：
+
+1. 在菜单中选择 `File -> Export Batch Pitch CSVs...`
+2. 选择一个输出目录
+3. 程序会自动在该目录下创建一个 `pitch_csv` 文件夹
+4. 每个音频会导出一个单独的 csv，文件名格式为：
+
+- `音频名_pitch.csv`
+
+每个 csv 中会包含：
+
+- 音频文件名
+- pitch 提取参数
+- 时间
+- 频率
+- segment label
+
+### 10.3 Export Praat .Pitch...
 
 导出为 Praat `.Pitch` 文件，便于在 Praat 或其他工具中继续使用。
 
-### 10.3 Export Acoustic Features CSV...
+### 10.4 Export Acoustic Features CSV...
 
 导出声学特征 CSV。
 
@@ -323,7 +346,7 @@ python main.py
 
 那么导出时会尽量按你最终编辑后的状态重算相关指标。
 
-### 10.4 Export Batch Acoustic Features CSV...
+### 10.5 Export Batch Acoustic Features CSV...
 
 如果左侧已经导入了多个音频，可以导出一个批量 CSV。
 
@@ -333,7 +356,46 @@ python main.py
 - 每行对应一个音频最终编辑后的 acoustic features
 - 同时附带该音频使用的 pitch 提取参数
 
-### 10.5 Export All...
+导出时会弹出一个可编辑的文件名输入框。
+
+如果你不修改文件名，程序会尝试根据第一个导入音频的文件名自动生成，例如：
+
+- `sub1_SP_acoustic_features.csv`
+
+如果没有识别出 `sub*` 和 `SP/NV` 信息，则默认使用：
+
+- `batch_acoustic_features.csv`
+
+### 10.6 Export Batch All...
+
+如果你想一次同时导出：
+
+- 所有音频各自的 pitch csv
+- 一个总的 batch acoustic features csv
+
+可以使用：
+
+`File -> Export Batch All...`
+
+流程是：
+
+1. 选择一个输出目录
+2. 程序会在该目录下：
+   - 创建或复用 `pitch_csv` 文件夹
+   - 输出所有音频各自的 `*_pitch.csv`
+   - 同时生成一个你可编辑命名的 acoustic features 总表
+
+在这一步里，程序会先弹出一个可编辑的 acoustic features 文件名输入框。
+
+如果你不修改，默认文件名会尽量根据第一个音频自动生成，例如：
+
+- `sub1_SP_acoustic_features.csv`
+
+快捷键：
+
+`Ctrl + Alt + Shift + E`
+
+### 10.7 Export All...
 
 快捷键：
 
@@ -400,4 +462,4 @@ python main.py
 5. 用 `Shift + Space` 听 pitch 轨迹
 6. 通过加点、删点、拖点、整段平移或改 segment 修正
 7. 左侧切换到下一条音频继续检查
-8. 最后导出 pitch CSV / Praat Pitch / Acoustic Features CSV / Batch Acoustic Features CSV
+8. 最后导出 pitch CSV / Batch Pitch CSVs / Praat Pitch / Acoustic Features CSV / Batch Acoustic Features CSV / Batch All

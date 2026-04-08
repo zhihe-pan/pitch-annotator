@@ -456,8 +456,9 @@ class PitchCanvas(QWidget):
         default_end = min(x_max, max(0.25, x_max * 0.2))
         self.region_item.setBounds([0.0, x_max])
         self.region_item.setRegion([0.0, default_end])
-        self.region_item.show()
-        self.selection_changed.emit(0.0, default_end)
+        self.region_item.hide()
+        self._update_selected_region_visual()
+        self.selection_changed.emit(0.0, 0.0)
 
     def update_segments(self, timestamps, segment_labels):
         for item in self.segment_items:
