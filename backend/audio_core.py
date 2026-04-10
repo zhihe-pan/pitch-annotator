@@ -1,7 +1,13 @@
 import numpy as np
 import librosa
 import parselmouth
+import os
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 from scipy.signal import find_peaks
+import soundfile as sf
 
 SEGMENT_SILENCE = 0
 SEGMENT_VOICELESS = 1
@@ -21,6 +27,8 @@ class AudioProcessor:
         self.maximum_frequency = 5000.0
         self.dynamic_range_db = 70.0
         self.filtered_ac_attenuation_at_top = 0.03
+        self._praat_executable = None
+        self._praat_checked = False
     
     def _maximum_formant_for_file(self):
         filepath = "" if self.loaded_filepath is None else str(self.loaded_filepath).lower()
@@ -71,6 +79,7 @@ class AudioProcessor:
         pitch_floor=50.0,
         pitch_ceiling=800.0,
         time_step=0.0,
+        filtered_ac_attenuation_at_top=0.03,
         voicing_threshold=0.50,
         silence_threshold=0.09,
         octave_cost=0.055,
@@ -81,30 +90,43 @@ class AudioProcessor:
         Extract pitch using parselmouth
         """
         if self.audio_data is None:
-            return np.array([]), np.array([]), np.array([], dtype=int), np.array([]), np.array([]), np.array([]), np.array([])
+            return np.array([]), np.array([]), np.array([], dtype=int), np.array([]), np.array([]), np.array([]), np.array([]), "Unavailable"
 
         raw_snd = parselmouth.Sound(self.audio_data, self.sr)
-        filtered_audio = self._apply_filtered_ac_lowpass(
-            self.audio_data,
-            self.sr,
-            pitch_ceiling,
-            self.filtered_ac_attenuation_at_top,
-        )
-        snd = parselmouth.Sound(filtered_audio, self.sr)
-        resolved_time_step = None if time_step <= 0 else time_step
-        pitch = snd.to_pitch_ac(
-            time_step=resolved_time_step,
-            pitch_floor=pitch_floor,
-            pitch_ceiling=pitch_ceiling,
-            voicing_threshold=voicing_threshold,
-            silence_threshold=silence_threshold,
-            octave_cost=octave_cost,
-            octave_jump_cost=octave_jump_cost,
-            voiced_unvoiced_cost=voiced_unvoiced_cost,
-        )
-        
-        pitch_values = pitch.selected_array['frequency']
-        timestamps = pitch.xs()
+        self.filtered_ac_attenuation_at_top = float(filtered_ac_attenuation_at_top)
+        external_result = None
+        if self.loaded_filepath:
+            external_result = self._extract_pitch_with_external_praat(
+                self.loaded_filepath,
+                pitch_floor,
+                pitch_ceiling,
+                time_step,
+                filtered_ac_attenuation_at_top,
+                voicing_threshold,
+                silence_threshold,
+                octave_cost,
+                octave_jump_cost,
+                voiced_unvoiced_cost,
+            )
+        if external_result is not None:
+            timestamps, pitch_values = external_result
+            pitch_source = "External Praat filtered AC"
+        else:
+            pitch = self._to_pitch_filtered_ac(
+                raw_snd,
+                pitch_floor,
+                pitch_ceiling,
+                time_step,
+                filtered_ac_attenuation_at_top,
+                voicing_threshold,
+                silence_threshold,
+                octave_cost,
+                octave_jump_cost,
+                voiced_unvoiced_cost,
+            )
+            pitch_values = pitch.selected_array['frequency']
+            timestamps = pitch.xs()
+            pitch_source = "Internal filtered AC fallback"
         segment_labels = self._classify_segments(
             raw_snd,
             timestamps,
@@ -117,7 +139,7 @@ class AudioProcessor:
             pitch_values,
             segment_labels,
         )
-        return timestamps, pitch_values, segment_labels, formant_times, f1_values, f2_values, f3_values
+        return timestamps, pitch_values, segment_labels, formant_times, f1_values, f2_values, f3_values, pitch_source
 
     def extract_formants_for_track(self, timestamps, pitch_values, segment_labels=None):
         if self.audio_data is None or self.sr is None:
@@ -181,6 +203,7 @@ class AudioProcessor:
         pitch_floor,
         pitch_ceiling,
         time_step,
+        filtered_ac_attenuation_at_top,
         voicing_threshold,
         silence_threshold,
         octave_cost,
@@ -195,35 +218,46 @@ class AudioProcessor:
         if len(region_times) == 0:
             return np.array([]), np.array([])
 
-        filtered_audio = self._apply_filtered_ac_lowpass(
-            self.audio_data,
-            self.sr,
+        external_result = self._extract_pitch_for_region_with_external_praat(
+            region_start,
+            region_end,
+            pitch_floor,
             pitch_ceiling,
-            self.filtered_ac_attenuation_at_top,
+            time_step,
+            filtered_ac_attenuation_at_top,
+            max(0.01, float(voicing_threshold) * 0.75),
+            min(1.0, float(silence_threshold) + 0.02),
+            octave_cost,
+            max(0.05, float(octave_jump_cost) * 0.85),
+            max(0.01, float(voiced_unvoiced_cost) * 0.75),
         )
-        snd = parselmouth.Sound(filtered_audio, self.sr)
-        part = snd.extract_part(
-            from_time=max(0.0, float(region_start)),
-            to_time=min(float(region_end), snd.duration),
-            window_shape=parselmouth.WindowShape.RECTANGULAR,
-            relative_width=1.0,
-            preserve_times=True,
-        )
+        if external_result is not None:
+            extracted_times, extracted_values = external_result
+        else:
+            snd = parselmouth.Sound(self.audio_data, self.sr)
+            part = snd.extract_part(
+                from_time=max(0.0, float(region_start)),
+                to_time=min(float(region_end), snd.duration),
+                window_shape=parselmouth.WindowShape.RECTANGULAR,
+                relative_width=1.0,
+                preserve_times=True,
+            )
 
-        resolved_time_step = None if time_step <= 0 else time_step
-        pitch = part.to_pitch_ac(
-            time_step=resolved_time_step,
-            pitch_floor=pitch_floor,
-            pitch_ceiling=pitch_ceiling,
-            voicing_threshold=max(0.01, voicing_threshold * 0.75),
-            silence_threshold=min(1.0, silence_threshold + 0.02),
-            octave_cost=octave_cost,
-            octave_jump_cost=max(0.05, octave_jump_cost * 0.85),
-            voiced_unvoiced_cost=max(0.01, voiced_unvoiced_cost * 0.75),
-        )
+            pitch = self._to_pitch_filtered_ac(
+                part,
+                pitch_floor,
+                pitch_ceiling,
+                time_step,
+                filtered_ac_attenuation_at_top,
+                max(0.01, float(voicing_threshold) * 0.75),
+                min(1.0, float(silence_threshold) + 0.02),
+                octave_cost,
+                max(0.05, float(octave_jump_cost) * 0.85),
+                max(0.01, float(voiced_unvoiced_cost) * 0.75),
+            )
 
-        extracted_times = pitch.xs()
-        extracted_values = pitch.selected_array["frequency"]
+            extracted_times = pitch.xs()
+            extracted_values = pitch.selected_array["frequency"]
         extracted_values[extracted_values == 0] = np.nan
 
         estimated_values = np.full(len(region_times), np.nan, dtype=float)
@@ -242,10 +276,242 @@ class AudioProcessor:
         return region_times, estimated_values
 
     @staticmethod
+    def _resolve_praat_time_step(pitch_floor, time_step):
+        if time_step and time_step > 0:
+            return float(time_step)
+        if pitch_floor <= 0:
+            return 0.0
+        return float(0.75 / float(pitch_floor))
+
+    def _to_pitch_filtered_ac(
+        self,
+        snd,
+        pitch_floor,
+        pitch_ceiling,
+        time_step,
+        filtered_ac_attenuation_at_top,
+        voicing_threshold,
+        silence_threshold,
+        octave_cost,
+        octave_jump_cost,
+        voiced_unvoiced_cost,
+    ):
+        resolved_time_step = self._resolve_praat_time_step(pitch_floor, time_step)
+        try:
+            return parselmouth.praat.call(
+                snd,
+                "To Pitch (filtered autocorrelation)",
+                resolved_time_step,
+                float(pitch_floor),
+                float(pitch_ceiling),
+                15,
+                "no",
+                float(filtered_ac_attenuation_at_top),
+                float(silence_threshold),
+                float(voicing_threshold),
+                float(octave_cost),
+                float(octave_jump_cost),
+                float(voiced_unvoiced_cost),
+            )
+        except parselmouth.PraatError:
+            filtered_audio = self._apply_filtered_ac_lowpass(
+                snd.values[0],
+                snd.sampling_frequency,
+                pitch_ceiling,
+                filtered_ac_attenuation_at_top,
+            )
+            filtered_snd = parselmouth.Sound(filtered_audio, snd.sampling_frequency)
+            return filtered_snd.to_pitch_ac(
+                time_step=resolved_time_step,
+                pitch_floor=float(pitch_floor),
+                pitch_ceiling=float(pitch_ceiling),
+                voicing_threshold=float(voicing_threshold),
+                silence_threshold=float(silence_threshold),
+                octave_cost=float(octave_cost),
+                octave_jump_cost=float(octave_jump_cost),
+                voiced_unvoiced_cost=float(voiced_unvoiced_cost),
+            )
+
+    def _find_praat_executable(self):
+        if self._praat_checked:
+            return self._praat_executable
+
+        candidates = []
+        env_path = os.environ.get("PRAAT_PATH")
+        if env_path:
+            candidates.append(env_path)
+
+        for binary_name in ("praat", "Praat", "praatcon", "Praat.exe", "praatcon.exe"):
+            found = shutil.which(binary_name)
+            if found:
+                candidates.append(found)
+
+        candidates.extend(
+            [
+                "/Applications/Praat.app/Contents/MacOS/Praat",
+                str(Path.home() / "Applications/Praat.app/Contents/MacOS/Praat"),
+                "C:/Program Files/Praat.exe",
+                "C:/Program Files/Praat/Praat.exe",
+                "C:/Program Files (x86)/Praat.exe",
+                "C:/Program Files (x86)/Praat/Praat.exe",
+            ]
+        )
+
+        self._praat_checked = True
+        for candidate in candidates:
+            if candidate and Path(candidate).exists():
+                self._praat_executable = str(Path(candidate))
+                return self._praat_executable
+        self._praat_executable = None
+        return None
+
+    def _extract_pitch_with_external_praat(
+        self,
+        audio_path,
+        pitch_floor,
+        pitch_ceiling,
+        time_step,
+        filtered_ac_attenuation_at_top,
+        voicing_threshold,
+        silence_threshold,
+        octave_cost,
+        octave_jump_cost,
+        voiced_unvoiced_cost,
+    ):
+        praat_executable = self._find_praat_executable()
+        if not praat_executable:
+            return None
+
+        script_text = """
+form Extract filtered AC pitch
+    infile Audio_file
+    outfile Output_file
+    real Time_step 0.0
+    positive Pitch_floor 50.0
+    positive Pitch_ceiling 800.0
+    real Attenuation_at_top 0.03
+    real Silence_threshold 0.09
+    real Voicing_threshold 0.50
+    real Octave_cost 0.055
+    real Octave_jump_cost 0.35
+    real Voiced_unvoiced_cost 0.14
+endform
+Read from file: audio_file$
+To Pitch (filtered autocorrelation): time_step, pitch_floor, pitch_ceiling, 15, "no", attenuation_at_top, silence_threshold, voicing_threshold, octave_cost, octave_jump_cost, voiced_unvoiced_cost
+deleteFile: output_file$
+appendFileLine: output_file$, "time", tab$, "frequency"
+numberOfFrames = Get number of frames
+for iframe to numberOfFrames
+    frameTime = Get time from frame: iframe
+    framePitch = Get value in frame: iframe, "Hertz"
+    if framePitch = undefined
+        appendFileLine: output_file$, fixed$ (frameTime, 10), tab$, 0
+    else
+        appendFileLine: output_file$, fixed$ (frameTime, 10), tab$, fixed$ (framePitch, 10)
+    endif
+endfor
+"""
+
+        with tempfile.TemporaryDirectory(prefix="pitch_annotator_praat_") as tmp_dir:
+            script_path = Path(tmp_dir) / "extract_pitch.praat"
+            output_path = Path(tmp_dir) / "pitch.tsv"
+            script_path.write_text(script_text, encoding="utf-8")
+            command = [
+                praat_executable,
+                "--run",
+                str(script_path),
+                str(audio_path),
+                str(output_path),
+                str(float(time_step)),
+                str(float(pitch_floor)),
+                str(float(pitch_ceiling)),
+                str(float(filtered_ac_attenuation_at_top)),
+                str(float(silence_threshold)),
+                str(float(voicing_threshold)),
+                str(float(octave_cost)),
+                str(float(octave_jump_cost)),
+                str(float(voiced_unvoiced_cost)),
+            ]
+            try:
+                subprocess.run(
+                    command,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+            except Exception:
+                return None
+
+            if not output_path.exists():
+                return None
+            return self._read_pitch_tsv(output_path)
+
+    def _extract_pitch_for_region_with_external_praat(
+        self,
+        region_start,
+        region_end,
+        pitch_floor,
+        pitch_ceiling,
+        time_step,
+        filtered_ac_attenuation_at_top,
+        voicing_threshold,
+        silence_threshold,
+        octave_cost,
+        octave_jump_cost,
+        voiced_unvoiced_cost,
+    ):
+        praat_executable = self._find_praat_executable()
+        if not praat_executable or self.audio_data is None or self.sr is None:
+            return None
+
+        start = max(0.0, float(region_start))
+        end = min(float(region_end), len(self.audio_data) / float(self.sr))
+        if end <= start:
+            return None
+
+        sample_start = max(0, int(np.floor(start * self.sr)))
+        sample_end = min(len(self.audio_data), int(np.ceil(end * self.sr)))
+        if sample_end <= sample_start:
+            return None
+
+        with tempfile.TemporaryDirectory(prefix="pitch_annotator_region_") as tmp_dir:
+            audio_path = Path(tmp_dir) / "region.wav"
+            sf.write(str(audio_path), np.asarray(self.audio_data[sample_start:sample_end], dtype=np.float32), self.sr)
+            result = self._extract_pitch_with_external_praat(
+                str(audio_path),
+                pitch_floor,
+                pitch_ceiling,
+                time_step,
+                filtered_ac_attenuation_at_top,
+                voicing_threshold,
+                silence_threshold,
+                octave_cost,
+                octave_jump_cost,
+                voiced_unvoiced_cost,
+            )
+            if result is None:
+                return None
+            times, values = result
+            return times + start, values
+
+    @staticmethod
+    def _read_pitch_tsv(output_path):
+        times = []
+        values = []
+        for line in Path(output_path).read_text(encoding="utf-8").splitlines()[1:]:
+            if not line.strip():
+                continue
+            time_str, freq_str = line.split("\t")
+            times.append(float(time_str))
+            values.append(float(freq_str))
+        return np.asarray(times, dtype=float), np.asarray(values, dtype=float)
+
+    @staticmethod
     def _apply_filtered_ac_lowpass(audio_data, sample_rate, pitch_top, attenuation_at_top):
         """
-        Approximate Praat's filtered-autocorrelation prefilter in the frequency
-        domain: H(f) = attenuation_at_top ** ((f / pitch_top) ** 2)
+        Fallback approximation of Praat filtered AC for older Parselmouth/Praat
+        builds that do not expose the filtered-autocorrelation command.
         """
         if pitch_top <= 0 or len(audio_data) == 0:
             return np.asarray(audio_data, dtype=float)
@@ -253,10 +519,7 @@ class AudioProcessor:
         samples = np.asarray(audio_data, dtype=float)
         spectrum = np.fft.rfft(samples)
         freqs = np.fft.rfftfreq(len(samples), d=1.0 / sample_rate)
-        attenuation = np.power(
-            float(attenuation_at_top),
-            np.square(freqs / float(pitch_top)),
-        )
+        attenuation = np.power(float(attenuation_at_top), np.square(freqs / float(pitch_top)))
         filtered = np.fft.irfft(spectrum * attenuation, n=len(samples))
         return np.asarray(filtered, dtype=float)
 

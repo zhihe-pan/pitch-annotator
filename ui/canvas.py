@@ -555,6 +555,19 @@ class PitchCanvas(QWidget):
     def fit_to_audio(self):
         self.plot_widget.setXRange(0.0, self.audio_end_time, padding=0)
 
+    def get_view_ranges(self):
+        x_range, y_range = self.vb.viewRange()
+        return (
+            (float(x_range[0]), float(x_range[1])),
+            (float(y_range[0]), float(y_range[1])),
+        )
+
+    def set_view_ranges(self, x_range=None, y_range=None):
+        if x_range is not None:
+            self.plot_widget.setXRange(float(x_range[0]), float(x_range[1]), padding=0)
+        if y_range is not None:
+            self.plot_widget.setYRange(float(y_range[0]), float(y_range[1]), padding=0)
+
     def on_mouse_click(self, event):
         if not self.vb.sceneBoundingRect().contains(event.scenePos()):
             return

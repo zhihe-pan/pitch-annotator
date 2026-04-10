@@ -5,6 +5,7 @@ PARAMETER_COLUMNS = [
     "pitch_floor",
     "pitch_ceiling",
     "time_step",
+    "filtered_ac_attenuation_at_top",
     "voicing_threshold",
     "silence_threshold",
     "octave_cost",

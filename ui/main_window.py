@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout,
                                QVBoxLayout, QListWidget, QListWidgetItem,
                                QStatusBar, QLabel, QGroupBox)
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtGui import QKeySequence, QShortcut
 from ui.canvas import PitchCanvas
 from ui.control_panel import ControlPanel
@@ -20,8 +21,10 @@ class MainWindow(QMainWindow):
     open_audio_requested = Signal()
     batch_export_acoustic_csv_requested = Signal()
     batch_export_pitch_csv_requested = Signal()
+    batch_export_spectrograms_requested = Signal()
     batch_export_all_requested = Signal()
     export_csv_requested = Signal()
+    export_spectrogram_requested = Signal()
     export_praat_requested = Signal()
     export_acoustic_csv_requested = Signal()
     export_all_requested = Signal()
@@ -68,6 +71,8 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(central_widget)
 
         sidebar = QWidget()
+        sidebar.setMinimumWidth(300)
+        sidebar.setMaximumWidth(420)
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         sidebar_layout.setSpacing(8)
@@ -104,8 +109,14 @@ class MainWindow(QMainWindow):
         action_export_csv = file_menu.addAction("Export CSV...")
         action_export_csv.triggered.connect(self.export_csv_requested.emit)
 
+        action_export_spectrogram = file_menu.addAction("Export Spectrogram Plot...")
+        action_export_spectrogram.triggered.connect(self.export_spectrogram_requested.emit)
+
         action_export_batch_pitch = file_menu.addAction("Export Batch Pitch CSVs...")
         action_export_batch_pitch.triggered.connect(self.batch_export_pitch_csv_requested.emit)
+
+        action_export_batch_spectrograms = file_menu.addAction("Export Batch Spectrogram Plots...")
+        action_export_batch_spectrograms.triggered.connect(self.batch_export_spectrograms_requested.emit)
         
         action_export_praat = file_menu.addAction("Export Praat .Pitch...")
         action_export_praat.triggered.connect(self.export_praat_requested.emit)
@@ -125,12 +136,17 @@ class MainWindow(QMainWindow):
     def _setup_statusbar(self):
         self.statusbar = QStatusBar()
         self.setStatusBar(self.statusbar)
+        self.lbl_current_file = QLabel("Current file: None")
+        self.lbl_current_file.setMinimumWidth(320)
         self.lbl_stats = QLabel("F0 Stats: N/A")
         self.lbl_voice = QLabel("Voice%: N/A")
+        self.lbl_pitch_source = QLabel("Pitch source: Unknown")
         self.lbl_duration = QLabel("Total: 0.000s | Selection: 0.000s")
+        self.statusbar.addWidget(self.lbl_current_file, 1)
         self.statusbar.addWidget(self.lbl_duration)
         self.statusbar.addPermanentWidget(self.lbl_stats)
         self.statusbar.addPermanentWidget(self.lbl_voice)
+        self.statusbar.addPermanentWidget(self.lbl_pitch_source)
 
     def _setup_shortcuts(self):
         self.shortcut_play_selection = QShortcut(QKeySequence(Qt.Key_Space), self)
@@ -165,6 +181,19 @@ class MainWindow(QMainWindow):
             f"Total: {total_duration:.3f}s | Selection: {selection_duration:.3f}s"
         )
 
+    def update_pitch_source(self, source_text):
+        self.lbl_pitch_source.setText(f"Pitch source: {source_text}")
+
+    def update_current_file(self, filepath):
+        if not filepath:
+            self.lbl_current_file.setText("Current file: None")
+            return
+        file_name = Path(filepath).name
+        metrics = QFontMetrics(self.lbl_current_file.font())
+        elided = metrics.elidedText(file_name, Qt.ElideMiddle, max(220, self.lbl_current_file.width() - 16))
+        self.lbl_current_file.setText(f"Current file: {elided}")
+        self.lbl_current_file.setToolTip(filepath)
+
     def set_audio_files(self, filepaths):
         self.audio_list.blockSignals(True)
         self.audio_list.clear()
@@ -173,6 +202,8 @@ class MainWindow(QMainWindow):
             item.setToolTip(filepath)
             self.audio_list.addItem(item)
         self.audio_list.blockSignals(False)
+        if not filepaths:
+            self.update_current_file("")
 
     def set_current_audio_index(self, index):
         if index < 0 or index >= self.audio_list.count():

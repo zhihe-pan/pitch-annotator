@@ -42,6 +42,12 @@ class BatchImportDialog(QDialog):
         self.spin_step.setValue(0.0)
         self.spin_step.setSuffix(" s")
 
+        self.spin_filtered_ac_attenuation = QDoubleSpinBox()
+        self.spin_filtered_ac_attenuation.setRange(0.001, 1.0)
+        self.spin_filtered_ac_attenuation.setDecimals(3)
+        self.spin_filtered_ac_attenuation.setSingleStep(0.01)
+        self.spin_filtered_ac_attenuation.setValue(0.03)
+
         self.spin_voicing_threshold = QDoubleSpinBox()
         self.spin_voicing_threshold.setRange(0.0, 1.0)
         self.spin_voicing_threshold.setDecimals(2)
@@ -75,6 +81,7 @@ class BatchImportDialog(QDialog):
         form.addRow("Pitch Floor:", self.spin_floor)
         form.addRow("Pitch Top:", self.spin_ceiling)
         form.addRow("Time Step:", self.spin_step)
+        form.addRow("Attenuation at Top:", self.spin_filtered_ac_attenuation)
         form.addRow("Voicing Threshold:", self.spin_voicing_threshold)
         form.addRow("Silence Threshold:", self.spin_silence_threshold)
         form.addRow("Octave Cost:", self.spin_octave_cost)
@@ -92,6 +99,7 @@ class BatchImportDialog(QDialog):
             "pitch_floor": float(self.spin_floor.value()),
             "pitch_ceiling": float(self.spin_ceiling.value()),
             "time_step": float(self.spin_step.value()),
+            "filtered_ac_attenuation_at_top": float(self.spin_filtered_ac_attenuation.value()),
             "voicing_threshold": float(self.spin_voicing_threshold.value()),
             "silence_threshold": float(self.spin_silence_threshold.value()),
             "octave_cost": float(self.spin_octave_cost.value()),

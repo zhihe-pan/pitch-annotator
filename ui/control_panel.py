@@ -5,12 +5,13 @@ from PySide6.QtCore import Signal, Qt
 
 class ControlPanel(QWidget):
     # Signals
-    parameters_changed = Signal(float, float, float, float, float, float, float, float)
+    parameters_changed = Signal(float, float, float, float, float, float, float, float, float)
     recompute_requested = Signal()
     region_toggled = Signal(bool)
     set_region_voiced = Signal()
     set_region_unvoiced = Signal()
     set_region_silence = Signal()
+    apply_params_to_all_requested = Signal()
     volume_changed = Signal(int)
     audio_output_device_changed = Signal(int)
 
@@ -45,6 +46,12 @@ class ControlPanel(QWidget):
         self.spin_step.setValue(0.0)
         self.spin_step.setSuffix(" s")
 
+        self.spin_filtered_ac_attenuation = QDoubleSpinBox()
+        self.spin_filtered_ac_attenuation.setRange(0.001, 1.0)
+        self.spin_filtered_ac_attenuation.setSingleStep(0.01)
+        self.spin_filtered_ac_attenuation.setDecimals(3)
+        self.spin_filtered_ac_attenuation.setValue(0.03)
+
         self.spin_voicing_threshold = QDoubleSpinBox()
         self.spin_voicing_threshold.setRange(0.0, 1.0)
         self.spin_voicing_threshold.setSingleStep(0.01)
@@ -78,6 +85,7 @@ class ControlPanel(QWidget):
         form_layout.addRow("Pitch Floor:", self.spin_floor)
         form_layout.addRow("Pitch Top:", self.spin_ceiling)
         form_layout.addRow("Time Step:", self.spin_step)
+        form_layout.addRow("Attenuation at Top:", self.spin_filtered_ac_attenuation)
         form_layout.addRow("Voicing Threshold:", self.spin_voicing_threshold)
         form_layout.addRow("Silence Threshold:", self.spin_silence_threshold)
         form_layout.addRow("Octave Cost:", self.spin_octave_cost)
@@ -85,7 +93,14 @@ class ControlPanel(QWidget):
         form_layout.addRow("Voiced/Unvoiced Cost:", self.spin_voiced_unvoiced_cost)
         
         btn_recompute = QPushButton("Recompute Initial Pitch")
+        self.btn_apply_all = QPushButton("Apply Current Params\nTo All Imported Files")
+        self.btn_apply_all.setToolTip(
+            "Copy the current pitch parameters to every imported audio file. "
+            "This updates their defaults, but you should still review each file manually."
+        )
+        self.btn_apply_all.setMinimumHeight(52)
         form_layout.addRow(btn_recompute)
+        form_layout.addRow(self.btn_apply_all)
         group_params.setLayout(form_layout)
         
         # Editing Tools Group
@@ -127,6 +142,7 @@ class ControlPanel(QWidget):
 
         # Connect internal signals
         btn_recompute.clicked.connect(self._on_recompute)
+        self.btn_apply_all.clicked.connect(self.apply_params_to_all_requested.emit)
         self.btn_toggle_region.toggled.connect(self.region_toggled.emit)
         btn_set_voiced.clicked.connect(self.set_region_voiced.emit)
         btn_set_unvoiced.clicked.connect(self.set_region_unvoiced.emit)
@@ -138,12 +154,13 @@ class ControlPanel(QWidget):
         f = float(self.spin_floor.value())
         c = float(self.spin_ceiling.value())
         s = float(self.spin_step.value())
+        a = float(self.spin_filtered_ac_attenuation.value())
         vt = float(self.spin_voicing_threshold.value())
         st = float(self.spin_silence_threshold.value())
         oc = float(self.spin_octave_cost.value())
         ojc = float(self.spin_octave_jump_cost.value())
         vuc = float(self.spin_voiced_unvoiced_cost.value())
-        self.parameters_changed.emit(f, c, s, vt, st, oc, ojc, vuc)
+        self.parameters_changed.emit(f, c, s, a, vt, st, oc, ojc, vuc)
         self.recompute_requested.emit()
 
     def _on_volume_changed(self, value):

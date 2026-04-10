@@ -13,10 +13,12 @@ class PitchState:
         self.f2_values = np.array([])
         self.f3_values = np.array([])
         self.voice_percent = 0.0
+        self.pitch_source = "Unknown"
         
         self.pitch_floor = 50.0
         self.pitch_ceiling = 800.0
         self.time_step = 0.0
+        self.filtered_ac_attenuation_at_top = 0.03
         self.voicing_threshold = 0.50
         self.silence_threshold = 0.09
         self.octave_cost = 0.055
@@ -48,6 +50,7 @@ class PitchState:
         self.f2_values = np.array([])
         self.f3_values = np.array([])
         self.voice_percent = 0.0
+        self.pitch_source = "Unknown"
         self.trigger_update()
 
     def snapshot_full_state(self):
@@ -63,9 +66,11 @@ class PitchState:
             "f2_values": np.array(self.f2_values, copy=True),
             "f3_values": np.array(self.f3_values, copy=True),
             "voice_percent": float(self.voice_percent),
+            "pitch_source": str(self.pitch_source),
             "pitch_floor": float(self.pitch_floor),
             "pitch_ceiling": float(self.pitch_ceiling),
             "time_step": float(self.time_step),
+            "filtered_ac_attenuation_at_top": float(self.filtered_ac_attenuation_at_top),
             "voicing_threshold": float(self.voicing_threshold),
             "silence_threshold": float(self.silence_threshold),
             "octave_cost": float(self.octave_cost),
@@ -85,9 +90,11 @@ class PitchState:
         self.f2_values = np.array(snapshot["f2_values"], copy=True)
         self.f3_values = np.array(snapshot["f3_values"], copy=True)
         self.voice_percent = float(snapshot["voice_percent"])
+        self.pitch_source = str(snapshot.get("pitch_source", "Unknown"))
         self.pitch_floor = float(snapshot["pitch_floor"])
         self.pitch_ceiling = float(snapshot["pitch_ceiling"])
         self.time_step = float(snapshot["time_step"])
+        self.filtered_ac_attenuation_at_top = float(snapshot.get("filtered_ac_attenuation_at_top", 0.03))
         self.voicing_threshold = float(snapshot["voicing_threshold"])
         self.silence_threshold = float(snapshot["silence_threshold"])
         self.octave_cost = float(snapshot["octave_cost"])
@@ -108,7 +115,7 @@ class PitchState:
         self.voice_percent = float(snapshot["voice_percent"])
         self.trigger_update()
 
-    def update_pitch_data(self, timestamps, pitch_values, segment_labels=None, formant_times=None, f1_values=None, f2_values=None, f3_values=None):
+    def update_pitch_data(self, timestamps, pitch_values, segment_labels=None, formant_times=None, f1_values=None, f2_values=None, f3_values=None, pitch_source=None):
         self.timestamps = timestamps
         self.pitch_values = pitch_values
         if segment_labels is None:
@@ -118,6 +125,8 @@ class PitchState:
         self.f1_values = np.array([]) if f1_values is None else np.asarray(f1_values, dtype=float)
         self.f2_values = np.array([]) if f2_values is None else np.asarray(f2_values, dtype=float)
         self.f3_values = np.array([]) if f3_values is None else np.asarray(f3_values, dtype=float)
+        if pitch_source is not None:
+            self.pitch_source = str(pitch_source)
         self.voice_percent = self._compute_voice_percent()
         self.trigger_update()
 

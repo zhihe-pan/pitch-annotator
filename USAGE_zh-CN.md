@@ -285,7 +285,7 @@ python main.py
 
 ## 10. 导出功能
 
-在菜单 `File` 中可以导出三类结果。
+在菜单 `File` 中可以导出当前文件或批量文件结果。
 
 ### 10.1 Export CSV...
 
@@ -299,7 +299,22 @@ python main.py
 - 频率
 - segment label
 
-### 10.2 Export Batch Pitch CSVs...
+### 10.2 Export Spectrogram Plot...
+
+导出当前文件的频谱图（PNG）。
+
+特点：
+
+- 复用当前界面渲染逻辑
+- 优先复用当前缓存的频谱数据
+- 复用当前可视范围（缩放后的时间/频率范围）
+- 同时叠加当前编辑后的 F0、Formants 和 segment 条带
+
+建议：
+
+- 如果你想导出局部细节，先在界面缩放到目标范围，再执行该导出。
+
+### 10.3 Export Batch Pitch CSVs...
 
 如果左侧已经导入了多个音频，可以一次性批量导出所有音频的 pitch 轨迹 csv。
 
@@ -320,11 +335,22 @@ python main.py
 - 频率
 - segment label
 
-### 10.3 Export Praat .Pitch...
+### 10.4 Export Batch Spectrogram Plots...
+
+批量导出所有已导入音频的频谱图（PNG）。
+
+流程：
+
+1. 选择 `File -> Export Batch Spectrogram Plots...`
+2. 选择输出目录
+3. 程序会在该目录下创建或复用 `spectrogram_plots/`
+4. 每条音频导出一个 `*_spectrogram.png`
+
+### 10.5 Export Praat .Pitch...
 
 导出为 Praat `.Pitch` 文件，便于在 Praat 或其他工具中继续使用。
 
-### 10.4 Export Acoustic Features CSV...
+### 10.6 Export Acoustic Features CSV...
 
 导出声学特征 CSV。
 
@@ -346,7 +372,7 @@ python main.py
 
 那么导出时会尽量按你最终编辑后的状态重算相关指标。
 
-### 10.5 Export Batch Acoustic Features CSV...
+### 10.7 Export Batch Acoustic Features CSV...
 
 如果左侧已经导入了多个音频，可以导出一个批量 CSV。
 
@@ -366,7 +392,7 @@ python main.py
 
 - `batch_acoustic_features.csv`
 
-### 10.6 Export Batch All...
+### 10.8 Export Batch All...
 
 如果你想一次同时导出：
 
@@ -395,7 +421,7 @@ python main.py
 
 `Ctrl + Alt + Shift + E`
 
-### 10.7 Export All...
+### 10.9 Export All...
 
 快捷键：
 
@@ -411,7 +437,25 @@ python main.py
 
 ## 11. 常见问题
 
-### 11.1 为什么看不到颜色条
+### 11.1 音高提取是不是 Praat filtered autocorrelation
+
+工具优先使用外部 Praat 的 `To Pitch (filtered autocorrelation)`。
+
+如果外部 Praat 不可用，会自动回退到内部实现。此时结果通常接近，但不保证逐帧完全一致。
+
+确认方式：
+
+- 查看状态栏 `Pitch source`
+- 显示 `External Praat filtered AC` 时表示走了外部 Praat 路径
+
+### 11.2 Windows 怎么确保走外部 Praat
+
+1. 安装 Praat
+2. 建议设置环境变量 `PRAAT_PATH` 指向 `Praat.exe` 或 `praatcon.exe`
+3. 重启 PitchAnnotator 后看状态栏 `Pitch source`
+4. 若不是 `External Praat filtered AC`，请检查路径和权限
+
+### 11.3 为什么看不到颜色条
 
 顶部有 segment 时间条和图例：
 
@@ -421,7 +465,7 @@ python main.py
 
 如果整段音频几乎全是同一种状态，颜色条会比较单一，这是正常现象。
 
-### 11.2 为什么 Voice% 没有想象中那么高
+### 11.4 为什么 Voice% 没有想象中那么高
 
 因为 Voice% 不是用整段录音长度算的，而是：
 
@@ -429,7 +473,7 @@ python main.py
 
 静音不进入分母。
 
-### 11.3 为什么我设成 voiced 之后数值变化不大
+### 11.5 为什么我设成 voiced 之后数值变化不大
 
 可能原因包括：
 
@@ -439,7 +483,7 @@ python main.py
 
 但数据本身已经会更新，并且可用 `Ctrl + Z` 撤销。
 
-### 11.4 macOS 打不开 app
+### 11.6 macOS 打不开 app
 
 如果第一次打开被系统拦截：
 
@@ -447,7 +491,7 @@ python main.py
 2. 选择“打开”
 3. 再次确认
 
-### 11.5 Windows 下双击 exe 没反应
+### 11.7 Windows 下双击 exe 没反应
 
 请确保你打开的是整个打包后的文件夹，而不是把单个 `.exe` 单独拷出来运行。
 
@@ -462,4 +506,6 @@ python main.py
 5. 用 `Shift + Space` 听 pitch 轨迹
 6. 通过加点、删点、拖点、整段平移或改 segment 修正
 7. 左侧切换到下一条音频继续检查
-8. 最后导出 pitch CSV / Batch Pitch CSVs / Praat Pitch / Acoustic Features CSV / Batch Acoustic Features CSV / Batch All
+8. 最后导出：
+   - 当前文件：`CSV / Spectrogram Plot / Praat .Pitch / Acoustic Features CSV / All`
+   - 批量：`Batch Pitch CSVs / Batch Spectrogram Plots / Batch Acoustic Features CSV / Batch All`

@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot, QStandardPaths, QByteArray, QBuffer, QIODevice, QUrl
+from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPen, qRgb
 from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QDialog
 
@@ -28,6 +29,8 @@ class BatchAudioEntry:
     params: dict
     state_snapshot: dict | None = None
     spectrogram_cache: dict | None = None
+    view_range_x: tuple[float, float] | None = None
+    view_range_y: tuple[float, float] | None = None
     selection_region: tuple[float, float] = (0.0, 0.25)
     region_visible: bool = False
     acoustic_row: dict | None = None
@@ -36,7 +39,7 @@ class BatchAudioEntry:
 
 class ComputeWorker(QObject):
     finished_loading = Signal(int, str, object, object, object, object, int)
-    finished_pitch = Signal(int, str, object, object, object, object, object, object, object)
+    finished_pitch = Signal(int, str, object, object, object, object, object, object, object, str)
     finished_snap = Signal(int, str, float, float)
     finished_region_voiced = Signal(int, str, float, float, object, object)
     error_occurred = Signal(str)
@@ -61,7 +64,7 @@ class ComputeWorker(QObject):
         except Exception as e:
             self.error_occurred.emit(str(e))
 
-    @Slot(int, str, float, float, float, float, float, float, float, float)
+    @Slot(int, str, float, float, float, float, float, float, float, float, float)
     def compute_pitch(
         self,
         entry_index,
@@ -69,6 +72,7 @@ class ComputeWorker(QObject):
         pitch_floor,
         pitch_ceiling,
         time_step,
+        filtered_ac_attenuation_at_top,
         voicing_threshold,
         silence_threshold,
         octave_cost,
@@ -78,10 +82,11 @@ class ComputeWorker(QObject):
         try:
             if self.processor.loaded_filepath != str(filepath):
                 self.processor.load_audio(filepath)
-            ts, vals, labels, formant_times, f1_values, f2_values, f3_values = self.processor.extract_pitch(
+            ts, vals, labels, formant_times, f1_values, f2_values, f3_values, pitch_source = self.processor.extract_pitch(
                 pitch_floor,
                 pitch_ceiling,
                 time_step,
+                filtered_ac_attenuation_at_top,
                 voicing_threshold,
                 silence_threshold,
                 octave_cost,
@@ -98,6 +103,7 @@ class ComputeWorker(QObject):
                 f1_values,
                 f2_values,
                 f3_values,
+                str(pitch_source),
             )
         except Exception as e:
             self.error_occurred.emit(str(e))
@@ -112,7 +118,7 @@ class ComputeWorker(QObject):
         except Exception as e:
             self.error_occurred.emit(str(e))
 
-    @Slot(int, str, float, float, object, float, float, float, float, float, float, float, float)
+    @Slot(int, str, float, float, object, float, float, float, float, float, float, float, float, float)
     def estimate_voiced_region(
         self,
         entry_index,
@@ -123,6 +129,7 @@ class ComputeWorker(QObject):
         pitch_floor,
         pitch_ceiling,
         time_step,
+        filtered_ac_attenuation_at_top,
         voicing_threshold,
         silence_threshold,
         octave_cost,
@@ -139,6 +146,7 @@ class ComputeWorker(QObject):
                 pitch_floor,
                 pitch_ceiling,
                 time_step,
+                filtered_ac_attenuation_at_top,
                 voicing_threshold,
                 silence_threshold,
                 octave_cost,
@@ -159,21 +167,36 @@ class ExportWorker(QObject):
         timestamps = np.asarray(entry.get("timestamps", np.array([])), dtype=float)
         pitch_values = np.asarray(entry.get("pitch_values", np.array([])), dtype=float)
         segment_labels = np.asarray(entry.get("segment_labels", np.array([])), dtype=int)
+        formant_times = np.asarray(entry.get("formant_times", np.array([])), dtype=float)
+        f1_values = np.asarray(entry.get("f1_values", np.array([])), dtype=float)
+        f2_values = np.asarray(entry.get("f2_values", np.array([])), dtype=float)
+        f3_values = np.asarray(entry.get("f3_values", np.array([])), dtype=float)
+        spectrogram_cache = entry.get("spectrogram_cache")
+        view_range_x = entry.get("view_range_x")
+        view_range_y = entry.get("view_range_y")
         if len(timestamps) > 0 and len(pitch_values) > 0 and len(segment_labels) == len(pitch_values):
             return {
                 **entry,
                 "timestamps": timestamps,
                 "pitch_values": pitch_values,
                 "segment_labels": segment_labels,
+                "formant_times": formant_times,
+                "f1_values": f1_values,
+                "f2_values": f2_values,
+                "f3_values": f3_values,
+                "spectrogram_cache": spectrogram_cache,
+                "view_range_x": view_range_x,
+                "view_range_y": view_range_y,
             }
 
         pitch_params = dict(entry["pitch_params"])
         processor = AudioProcessor()
         processor.load_audio(entry["audio_path"])
-        timestamps, pitch_values, segment_labels, *_ = processor.extract_pitch(
+        timestamps, pitch_values, segment_labels, formant_times, f1_values, f2_values, f3_values, _ = processor.extract_pitch(
             float(pitch_params.get("pitch_floor", 50.0)),
             float(pitch_params.get("pitch_ceiling", 800.0)),
             float(pitch_params.get("time_step", 0.0)),
+            float(pitch_params.get("filtered_ac_attenuation_at_top", 0.03)),
             float(pitch_params.get("voicing_threshold", 0.50)),
             float(pitch_params.get("silence_threshold", 0.09)),
             float(pitch_params.get("octave_cost", 0.055)),
@@ -185,7 +208,287 @@ class ExportWorker(QObject):
             "timestamps": np.asarray(timestamps, dtype=float),
             "pitch_values": np.asarray(pitch_values, dtype=float),
             "segment_labels": np.asarray(segment_labels, dtype=int),
+            "formant_times": np.asarray(formant_times, dtype=float),
+            "f1_values": np.asarray(f1_values, dtype=float),
+            "f2_values": np.asarray(f2_values, dtype=float),
+            "f3_values": np.asarray(f3_values, dtype=float),
+            "spectrogram_cache": spectrogram_cache,
+            "view_range_x": view_range_x,
+            "view_range_y": view_range_y,
         }
+
+    @staticmethod
+    def _resample_spectrogram_to_grayscale(spec_db, target_width, target_height):
+        spec_db = np.asarray(spec_db, dtype=float)
+        if spec_db.size == 0:
+            return np.full((target_height, target_width), 255, dtype=np.uint8)
+        max_db = float(np.nanmax(spec_db))
+        if not np.isfinite(max_db):
+            return np.full((target_height, target_width), 255, dtype=np.uint8)
+        min_db = max_db - 70.0
+        spec_db = np.nan_to_num(spec_db, nan=min_db, posinf=max_db, neginf=min_db)
+        norm = np.clip((spec_db - min_db) / max(1e-6, max_db - min_db), 0.0, 1.0)
+        gray = (255.0 * (1.0 - norm)).astype(np.uint8)
+        gray = np.flipud(gray)
+        y_idx = np.linspace(0, gray.shape[0] - 1, target_height).astype(int)
+        x_idx = np.linspace(0, gray.shape[1] - 1, target_width).astype(int)
+        return np.ascontiguousarray(gray[np.ix_(y_idx, x_idx)])
+
+    @staticmethod
+    def _crop_spectrogram_to_view(spec_db, spec_times, spec_freqs, x_range, y_range):
+        spec_db = np.asarray(spec_db, dtype=float)
+        spec_times = np.asarray(spec_times, dtype=float)
+        spec_freqs = np.asarray(spec_freqs, dtype=float)
+        if spec_db.size == 0 or len(spec_times) == 0 or len(spec_freqs) == 0:
+            return spec_db
+
+        x_min, x_max = x_range
+        y_min, y_max = y_range
+        time_mask = (spec_times >= x_min) & (spec_times <= x_max)
+        freq_mask = (spec_freqs >= y_min) & (spec_freqs <= y_max)
+
+        if not np.any(time_mask):
+            nearest_time = int(np.abs(spec_times - np.clip((x_min + x_max) / 2.0, spec_times[0], spec_times[-1])).argmin())
+            time_mask = np.zeros_like(spec_times, dtype=bool)
+            time_mask[nearest_time] = True
+        if not np.any(freq_mask):
+            nearest_freq = int(np.abs(spec_freqs - np.clip((y_min + y_max) / 2.0, spec_freqs[0], spec_freqs[-1])).argmin())
+            freq_mask = np.zeros_like(spec_freqs, dtype=bool)
+            freq_mask[nearest_freq] = True
+
+        return spec_db[np.ix_(freq_mask, time_mask)]
+
+    @staticmethod
+    def _draw_polyline(painter, x_values, y_values):
+        last_point = None
+        for x_val, y_val in zip(x_values, y_values):
+            if not np.isfinite(x_val) or not np.isfinite(y_val):
+                last_point = None
+                continue
+            point = (int(round(x_val)), int(round(y_val)))
+            if last_point is not None:
+                painter.drawLine(last_point[0], last_point[1], point[0], point[1])
+            last_point = point
+
+    def _export_internal_spectrogram_plot(self, entry, output_dir=None, output_filepath=None):
+        resolved = self._resolve_pitch_payload(entry)
+        formant_times = np.asarray(resolved.get("formant_times", np.array([])), dtype=float)
+        f1_values = np.asarray(resolved.get("f1_values", np.array([])), dtype=float)
+        f2_values = np.asarray(resolved.get("f2_values", np.array([])), dtype=float)
+        f3_values = np.asarray(resolved.get("f3_values", np.array([])), dtype=float)
+        spectrogram_cache = resolved.get("spectrogram_cache") or {}
+        spec_db = np.asarray(spectrogram_cache.get("S_db", np.array([])), dtype=float)
+        spec_times = np.asarray(spectrogram_cache.get("times", np.array([])), dtype=float)
+        spec_freqs = np.asarray(spectrogram_cache.get("freqs", np.array([])), dtype=float)
+
+        processor = None
+        if spec_db.size == 0 or len(spec_times) == 0 or len(spec_freqs) == 0 or len(formant_times) == 0:
+            processor = AudioProcessor()
+            processor.load_audio(resolved["audio_path"])
+            if spec_db.size == 0 or len(spec_times) == 0 or len(spec_freqs) == 0:
+                spec_db = np.asarray(processor.S_db, dtype=float)
+                spec_times = np.asarray(processor.spec_times, dtype=float)
+                spec_freqs = np.asarray(processor.spec_freqs, dtype=float)
+        if len(formant_times) == 0:
+            if processor is None:
+                processor = AudioProcessor()
+                processor.load_audio(resolved["audio_path"])
+            formant_times, f1_values, f2_values, f3_values = processor.extract_formants_for_track(
+                resolved["timestamps"],
+                resolved["pitch_values"],
+                resolved["segment_labels"],
+            )
+
+        width = 1600
+        height = 900
+        margin_left = 80
+        margin_right = 50
+        margin_top = 55
+        margin_bottom = 55
+        plot_width = width - margin_left - margin_right
+        plot_height = height - margin_top - margin_bottom
+        band_height = 18
+        plot_bottom = margin_top + plot_height
+        full_duration = float(spec_times[-1]) if len(spec_times) else 1.0
+        full_max_freq = float(spec_freqs[-1]) if len(spec_freqs) else 5000.0
+        export_x_range = resolved.get("view_range_x") or (0.0, full_duration)
+        export_y_range = resolved.get("view_range_y") or (0.0, full_max_freq)
+        export_x_range = (
+            max(0.0, min(float(export_x_range[0]), full_duration)),
+            max(0.0, min(float(export_x_range[1]), full_duration)),
+        )
+        export_y_range = (
+            max(0.0, min(float(export_y_range[0]), full_max_freq)),
+            max(0.0, min(float(export_y_range[1]), full_max_freq)),
+        )
+        if export_x_range[1] <= export_x_range[0]:
+            export_x_range = (0.0, full_duration)
+        if export_y_range[1] <= export_y_range[0]:
+            export_y_range = (0.0, full_max_freq)
+        view_duration = max(1e-6, export_x_range[1] - export_x_range[0])
+        view_freq_span = max(1e-6, export_y_range[1] - export_y_range[0])
+
+        image = QImage(width, height, QImage.Format_RGB32)
+        image.fill(QColor("#ffffff"))
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        cropped_db = self._crop_spectrogram_to_view(
+            spec_db,
+            spec_times,
+            spec_freqs,
+            export_x_range,
+            export_y_range,
+        )
+        spectrogram_gray = self._resample_spectrogram_to_grayscale(cropped_db, plot_width, plot_height)
+        grayscale_bytes = np.ascontiguousarray(spectrogram_gray)
+        spec_image = QImage(
+            grayscale_bytes.data,
+            plot_width,
+            plot_height,
+            plot_width,
+            QImage.Format_Indexed8,
+        )
+        spec_image.setColorTable([qRgb(i, i, i) for i in range(256)])
+        painter.drawImage(margin_left, margin_top, spec_image.copy())
+
+        def time_to_x(time_value):
+            if view_duration <= 0:
+                return float(margin_left)
+            clipped = float(np.clip(time_value, export_x_range[0], export_x_range[1]))
+            return float(margin_left + ((clipped - export_x_range[0]) / view_duration) * plot_width)
+
+        def freq_to_y(freq_value):
+            if view_freq_span <= 0:
+                return float(plot_bottom)
+            clipped = float(np.clip(freq_value, export_y_range[0], export_y_range[1]))
+            return float(margin_top + (1.0 - (clipped - export_y_range[0]) / view_freq_span) * plot_height)
+
+        segment_labels = np.asarray(resolved["segment_labels"], dtype=int)
+        timestamps = np.asarray(resolved["timestamps"], dtype=float)
+        if len(timestamps) and len(segment_labels) == len(timestamps):
+            step = float(np.median(np.diff(timestamps))) if len(timestamps) > 1 else 0.01
+            half_width = step / 2.0
+            # Match in-app segment band (bottom of plot); keep colors subdued for print.
+            color_map = {
+                0: QColor(255, 233, 153, 140),
+                1: QColor(128, 128, 128, 140),
+                2: QColor(70, 190, 110, 140),
+            }
+            start_idx = 0
+            while start_idx < len(segment_labels):
+                label = int(segment_labels[start_idx])
+                end_idx = start_idx + 1
+                while end_idx < len(segment_labels) and int(segment_labels[end_idx]) == label:
+                    end_idx += 1
+                x0_time = max(export_x_range[0], float(timestamps[start_idx] - half_width))
+                x1_time = min(export_x_range[1], float(timestamps[end_idx - 1] + half_width))
+                if start_idx == 0:
+                    x0_time = max(export_x_range[0], 0.0)
+                if end_idx == len(segment_labels):
+                    x1_time = min(export_x_range[1], full_duration)
+                if x1_time <= x0_time:
+                    start_idx = end_idx
+                    continue
+                color = color_map.get(label, QColor(0, 0, 0, 0))
+                painter.fillRect(
+                    int(round(time_to_x(x0_time))),
+                    plot_bottom - band_height,
+                    max(1, int(round(time_to_x(x1_time) - time_to_x(x0_time)))),
+                    band_height,
+                    color,
+                )
+                start_idx = end_idx
+
+        valid_pitch = np.asarray(resolved["pitch_values"], dtype=float)
+        finite_pitch = valid_pitch[np.isfinite(valid_pitch) & (valid_pitch > 0)]
+        quantiles = []
+        if len(finite_pitch):
+            quantiles = [
+                (np.nanpercentile(finite_pitch, 20), QColor("#2a6fdb")),
+                (np.nanpercentile(finite_pitch, 50), QColor("#c0392b")),
+                (np.nanpercentile(finite_pitch, 80), QColor("#0f766e")),
+            ]
+        painter.save()
+        painter.setClipRect(margin_left, margin_top, plot_width, plot_height)
+        for value, color in quantiles:
+            if value < export_y_range[0] or value > export_y_range[1]:
+                continue
+            y_val = int(round(freq_to_y(value)))
+            painter.setPen(QPen(color, 2, Qt.DashLine))
+            painter.drawLine(margin_left, y_val, margin_left + plot_width, y_val)
+
+        x_values = np.array([time_to_x(t) for t in timestamps], dtype=float)
+        y_values = np.array([freq_to_y(v) if np.isfinite(v) and v > 0 else np.nan for v in valid_pitch], dtype=float)
+        painter.setPen(QPen(QColor("#1f5cff"), 2))
+        last_point = None
+        for x_val, y_val in zip(x_values, y_values):
+            if not np.isfinite(x_val) or not np.isfinite(y_val):
+                last_point = None
+                continue
+            point = (int(round(x_val)), int(round(y_val)))
+            if last_point is not None:
+                painter.drawLine(last_point[0], last_point[1], point[0], point[1])
+            last_point = point
+
+        painter.setPen(QPen(QColor("#1f5cff"), 1))
+        painter.setBrush(QColor("#1f5cff"))
+        for x_val, y_val in zip(x_values, y_values):
+            if np.isfinite(y_val):
+                painter.drawEllipse(int(round(x_val)) - 2, int(round(y_val)) - 2, 4, 4)
+
+        def draw_formants(times, values, color):
+            painter.save()
+            painter.setClipRect(margin_left, margin_top, plot_width, plot_height)
+            painter.setPen(QPen(color, 1))
+            painter.setBrush(color)
+            for t_val, f_val in zip(times, values):
+                if np.isfinite(t_val) and np.isfinite(f_val) and f_val > 0:
+                    x_val = int(round(time_to_x(t_val)))
+                    y_val = int(round(freq_to_y(f_val)))
+                    painter.drawEllipse(x_val - 2, y_val - 2, 4, 4)
+            painter.restore()
+
+        draw_formants(formant_times, f1_values, QColor("#ef4444"))
+        draw_formants(formant_times, f2_values, QColor("#fb923c"))
+        draw_formants(formant_times, f3_values, QColor("#facc15"))
+        painter.restore()
+
+        painter.setPen(QPen(QColor("#222222"), 1))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(margin_left, margin_top, plot_width, plot_height)
+        painter.drawText(margin_left, 20, f"Spectrogram: {Path(resolved['audio_path']).name}")
+        painter.drawText(margin_left, height - 20, "Time (s)")
+        painter.save()
+        painter.translate(18, margin_top + plot_height / 2)
+        painter.rotate(-90)
+        painter.drawText(0, 0, "Frequency (Hz)")
+        painter.restore()
+
+        for ratio in (0.0, 0.25, 0.5, 0.75, 1.0):
+            t_val = export_x_range[0] + view_duration * ratio
+            x_val = int(round(time_to_x(t_val)))
+            painter.setPen(QPen(QColor("#444444"), 1))
+            painter.drawLine(x_val, plot_bottom, x_val, plot_bottom + 6)
+            painter.drawText(x_val - 14, plot_bottom + 22, f"{t_val:.2f}")
+
+        for ratio in (0.0, 0.25, 0.5, 0.75, 1.0):
+            f_val = export_y_range[0] + view_freq_span * ratio
+            y_val = int(round(freq_to_y(f_val)))
+            painter.setPen(QPen(QColor("#444444"), 1))
+            painter.drawLine(margin_left - 6, y_val, margin_left, y_val)
+            painter.drawText(8, y_val + 4, f"{int(round(f_val))}")
+
+        if output_filepath:
+            output_path = Path(output_filepath)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+        elif output_dir:
+            output_path = Path(output_dir) / f"{Path(resolved['audio_path']).stem}_spectrogram.png"
+        else:
+            raise ValueError("Either output_dir or output_filepath must be provided.")
+        painter.end()
+        if not image.save(str(output_path)):
+            raise RuntimeError(f"Failed to save spectrogram image to {output_path}")
 
     @Slot(object)
     def run_task(self, task):
@@ -268,6 +571,27 @@ class ExportWorker(QObject):
                 self.finished.emit(f"Exported batch pitch CSVs to {output_dir}")
                 return
 
+            if task_type == "batch_spectrogram_plots":
+                selected_dir = Path(task["output_dir"])
+                output_dir = (
+                    selected_dir
+                    if selected_dir.name == "spectrogram_plots"
+                    else selected_dir / "spectrogram_plots"
+                )
+                output_dir.mkdir(parents=True, exist_ok=True)
+                for entry in task["entries"]:
+                    self._export_internal_spectrogram_plot(entry, output_dir)
+                self.finished.emit(f"Exported batch spectrogram plots to {output_dir}")
+                return
+
+            if task_type == "spectrogram_plot":
+                self._export_internal_spectrogram_plot(
+                    task["entry"],
+                    output_filepath=task["filepath"],
+                )
+                self.finished.emit(f"Exported spectrogram plot to {task['filepath']}")
+                return
+
             if task_type == "export_all":
                 export_csv(
                     task["pitch_csv_path"],
@@ -345,9 +669,9 @@ class ExportWorker(QObject):
 
 class Controller(QObject):
     request_load = Signal(int, str)
-    request_compute = Signal(int, str, float, float, float, float, float, float, float, float)
+    request_compute = Signal(int, str, float, float, float, float, float, float, float, float, float)
     request_snap = Signal(int, str, float, float)
-    request_estimate_voiced_region = Signal(int, str, float, float, object, float, float, float, float, float, float, float, float)
+    request_estimate_voiced_region = Signal(int, str, float, float, object, float, float, float, float, float, float, float, float, float)
     request_export = Signal(object)
 
     def __init__(self, window: MainWindow, state: PitchState, processor: AudioProcessor):
@@ -393,7 +717,9 @@ class Controller(QObject):
         self.window.next_audio_requested.connect(self._handle_next_audio)
         self.window.previous_audio_requested.connect(self._handle_previous_audio)
         self.window.export_csv_requested.connect(self._handle_export_csv)
+        self.window.export_spectrogram_requested.connect(self._handle_export_spectrogram)
         self.window.batch_export_pitch_csv_requested.connect(self._handle_batch_export_pitch_csv)
+        self.window.batch_export_spectrograms_requested.connect(self._handle_batch_export_spectrograms)
         self.window.export_praat_requested.connect(self._handle_export_praat)
         self.window.export_acoustic_csv_requested.connect(self._handle_export_acoustic_csv)
         self.window.batch_export_acoustic_csv_requested.connect(self._handle_batch_export_acoustic_csv)
@@ -414,6 +740,7 @@ class Controller(QObject):
         self.window.canvas.selection_changed.connect(self._handle_selection_changed)
 
         self.window.control_panel.recompute_requested.connect(self._handle_recompute)
+        self.window.control_panel.apply_params_to_all_requested.connect(self._handle_apply_params_to_all)
         self.window.control_panel.region_toggled.connect(self._handle_region_toggled)
         self.window.control_panel.set_region_voiced.connect(self._handle_set_region_voiced)
         self.window.control_panel.set_region_unvoiced.connect(self._handle_set_region_unvoiced)
@@ -439,6 +766,7 @@ class Controller(QObject):
             "pitch_floor": 50.0,
             "pitch_ceiling": 800.0,
             "time_step": 0.0,
+            "filtered_ac_attenuation_at_top": 0.03,
             "voicing_threshold": 0.50,
             "silence_threshold": 0.09,
             "octave_cost": 0.055,
@@ -493,6 +821,7 @@ class Controller(QObject):
         dialog.spin_floor.setValue(int(defaults["pitch_floor"]))
         dialog.spin_ceiling.setValue(int(defaults["pitch_ceiling"]))
         dialog.spin_step.setValue(float(defaults["time_step"]))
+        dialog.spin_filtered_ac_attenuation.setValue(float(defaults["filtered_ac_attenuation_at_top"]))
         dialog.spin_voicing_threshold.setValue(float(defaults["voicing_threshold"]))
         dialog.spin_silence_threshold.setValue(float(defaults["silence_threshold"]))
         dialog.spin_octave_cost.setValue(float(defaults["octave_cost"]))
@@ -527,18 +856,22 @@ class Controller(QObject):
         self.current_entry_index = index
         self.window.set_current_audio_index(index)
         entry = self.batch_entries[index]
+        self.window.update_current_file(entry.filepath)
         self._undo_stack.clear()
         self._apply_params_to_controls(entry.params)
 
         if entry.state_snapshot is not None and entry.spectrogram_cache is not None:
             self._suppress_dirty_tracking = True
-            self.state.restore_full_state(entry.state_snapshot)
             self.window.canvas.update_spectrogram(
                 entry.spectrogram_cache["S_db"],
                 entry.spectrogram_cache["times"],
                 entry.spectrogram_cache["freqs"],
             )
-            self.window.canvas.fit_to_audio()
+            self.state.restore_full_state(entry.state_snapshot)
+            if entry.view_range_x is not None or entry.view_range_y is not None:
+                self.window.canvas.set_view_ranges(entry.view_range_x, entry.view_range_y)
+            else:
+                self.window.canvas.fit_to_audio()
             self.window.canvas.region_item.setRegion(list(entry.selection_region))
             self.window.canvas.show_region(entry.region_visible)
             self.window.update_durations(
@@ -567,7 +900,10 @@ class Controller(QObject):
         self.state.audio_path = entry.filepath
         self.state.set_audio_data(audio_data, sr)
         self.window.canvas.update_spectrogram(S_db, times, freqs)
-        self.window.canvas.fit_to_audio()
+        if entry.view_range_x is not None or entry.view_range_y is not None:
+            self.window.canvas.set_view_ranges(entry.view_range_x, entry.view_range_y)
+        else:
+            self.window.canvas.fit_to_audio()
         self.window.canvas.region_item.setRegion(list(entry.selection_region))
         self.window.canvas.show_region(entry.region_visible)
         self.window.update_durations(
@@ -583,6 +919,7 @@ class Controller(QObject):
         floor = float(self.window.control_panel.spin_floor.value())
         ceiling = float(self.window.control_panel.spin_ceiling.value())
         step = float(self.window.control_panel.spin_step.value())
+        attenuation_at_top = float(self.window.control_panel.spin_filtered_ac_attenuation.value())
         voicing_threshold = float(self.window.control_panel.spin_voicing_threshold.value())
         silence_threshold = float(self.window.control_panel.spin_silence_threshold.value())
         octave_cost = float(self.window.control_panel.spin_octave_cost.value())
@@ -592,6 +929,7 @@ class Controller(QObject):
         self.state.pitch_floor = floor
         self.state.pitch_ceiling = ceiling
         self.state.time_step = step
+        self.state.filtered_ac_attenuation_at_top = attenuation_at_top
         self.state.voicing_threshold = voicing_threshold
         self.state.silence_threshold = silence_threshold
         self.state.octave_cost = octave_cost
@@ -607,6 +945,7 @@ class Controller(QObject):
             floor,
             ceiling,
             step,
+            attenuation_at_top,
             voicing_threshold,
             silence_threshold,
             octave_cost,
@@ -614,7 +953,45 @@ class Controller(QObject):
             voiced_unvoiced_cost,
         )
 
-    def _on_pitch_finished(self, entry_index, filepath, timestamps, pitch_values, segment_labels, formant_times, f1_values, f2_values, f3_values):
+    def _handle_apply_params_to_all(self):
+        if not self.batch_entries:
+            self.window.statusbar.showMessage("No audio files imported.", 3000)
+            return
+
+        params = {
+            "pitch_floor": float(self.window.control_panel.spin_floor.value()),
+            "pitch_ceiling": float(self.window.control_panel.spin_ceiling.value()),
+            "time_step": float(self.window.control_panel.spin_step.value()),
+            "filtered_ac_attenuation_at_top": float(self.window.control_panel.spin_filtered_ac_attenuation.value()),
+            "voicing_threshold": float(self.window.control_panel.spin_voicing_threshold.value()),
+            "silence_threshold": float(self.window.control_panel.spin_silence_threshold.value()),
+            "octave_cost": float(self.window.control_panel.spin_octave_cost.value()),
+            "octave_jump_cost": float(self.window.control_panel.spin_octave_jump_cost.value()),
+            "voiced_unvoiced_cost": float(self.window.control_panel.spin_voiced_unvoiced_cost.value()),
+        }
+
+        for index, entry in enumerate(self.batch_entries):
+            entry.params = dict(params)
+            entry.acoustic_row = None
+            entry.state_snapshot = None
+            entry.dirty = False
+            self.window.update_audio_file_entry(index, entry.filepath, False)
+
+        if 0 <= self.current_entry_index < len(self.batch_entries):
+            self.batch_entries[self.current_entry_index].params = dict(params)
+            self.window.statusbar.showMessage(
+                "Applied current pitch parameters to all files. Star markers were cleared; please review each file manually.",
+                5000,
+            )
+            self._handle_recompute()
+            return
+
+        self.window.statusbar.showMessage(
+            "Applied current pitch parameters to all imported audio files. Star markers were cleared.",
+            4000,
+        )
+
+    def _on_pitch_finished(self, entry_index, filepath, timestamps, pitch_values, segment_labels, formant_times, f1_values, f2_values, f3_values, pitch_source):
         if entry_index < 0 or entry_index >= len(self.batch_entries):
             return
         entry = self.batch_entries[entry_index]
@@ -628,9 +1005,10 @@ class Controller(QObject):
             f1_values,
             f2_values,
             f3_values,
+            pitch_source,
         )
         self._save_current_entry_state()
-        self.window.statusbar.showMessage("Pitch computing finished.", 3000)
+        self.window.statusbar.showMessage(f"Pitch computing finished. Source: {pitch_source}", 3000)
         self._loading_entry_index = -1
         self._suppress_dirty_tracking = False
 
@@ -644,6 +1022,9 @@ class Controller(QObject):
         start, end = self.window.canvas.get_selected_region()
         entry.selection_region = (float(start), float(end))
         entry.region_visible = self.window.canvas.region_item.isVisible()
+        view_range_x, view_range_y = self.window.canvas.get_view_ranges()
+        entry.view_range_x = view_range_x
+        entry.view_range_y = view_range_y
         entry.params = self._current_pitch_params()
         entry.acoustic_row = None
 
@@ -651,6 +1032,7 @@ class Controller(QObject):
         self.window.control_panel.spin_floor.setValue(int(params["pitch_floor"]))
         self.window.control_panel.spin_ceiling.setValue(int(params["pitch_ceiling"]))
         self.window.control_panel.spin_step.setValue(float(params["time_step"]))
+        self.window.control_panel.spin_filtered_ac_attenuation.setValue(float(params.get("filtered_ac_attenuation_at_top", 0.03)))
         self.window.control_panel.spin_voicing_threshold.setValue(float(params["voicing_threshold"]))
         self.window.control_panel.spin_silence_threshold.setValue(float(params["silence_threshold"]))
         self.window.control_panel.spin_octave_cost.setValue(float(params["octave_cost"]))
@@ -668,6 +1050,7 @@ class Controller(QObject):
         )
         p20, p50, p80 = self.state.get_quantiles()
         self.window.update_stats(p20, p50, p80, self.state.voice_percent)
+        self.window.update_pitch_source(self.state.pitch_source)
         self.window.canvas.update_quantile_lines(p20, p50, p80)
         if self.current_entry_index >= 0 and self.current_entry_index < len(self.batch_entries):
             self._save_current_entry_state()
@@ -759,6 +1142,7 @@ class Controller(QObject):
             self.state.pitch_floor,
             self.state.pitch_ceiling,
             self.state.time_step,
+            self.state.filtered_ac_attenuation_at_top,
             self.state.voicing_threshold,
             self.state.silence_threshold,
             self.state.octave_cost,
@@ -914,6 +1298,7 @@ class Controller(QObject):
             "pitch_floor": float(self.state.pitch_floor),
             "pitch_ceiling": float(self.state.pitch_ceiling),
             "time_step": float(self.state.time_step),
+            "filtered_ac_attenuation_at_top": float(self.state.filtered_ac_attenuation_at_top),
             "voicing_threshold": float(self.state.voicing_threshold),
             "silence_threshold": float(self.state.silence_threshold),
             "octave_cost": float(self.state.octave_cost),
@@ -942,6 +1327,13 @@ class Controller(QObject):
                 "timestamps": np.array([], dtype=float),
                 "pitch_values": np.array([], dtype=float),
                 "segment_labels": np.array([], dtype=int),
+                "spectrogram_cache": None if entry.spectrogram_cache is None else {
+                    "S_db": np.array(entry.spectrogram_cache["S_db"], copy=True),
+                    "times": np.array(entry.spectrogram_cache["times"], copy=True),
+                    "freqs": np.array(entry.spectrogram_cache["freqs"], copy=True),
+                },
+                "view_range_x": entry.view_range_x,
+                "view_range_y": entry.view_range_y,
             }
         snapshot = entry.state_snapshot
         return {
@@ -950,6 +1342,17 @@ class Controller(QObject):
             "timestamps": np.array(snapshot["timestamps"], copy=True),
             "pitch_values": np.array(snapshot["pitch_values"], copy=True),
             "segment_labels": np.array(snapshot["segment_labels"], copy=True),
+            "formant_times": np.array(snapshot.get("formant_times", np.array([])), copy=True),
+            "f1_values": np.array(snapshot.get("f1_values", np.array([])), copy=True),
+            "f2_values": np.array(snapshot.get("f2_values", np.array([])), copy=True),
+            "f3_values": np.array(snapshot.get("f3_values", np.array([])), copy=True),
+            "spectrogram_cache": None if entry.spectrogram_cache is None else {
+                "S_db": np.array(entry.spectrogram_cache["S_db"], copy=True),
+                "times": np.array(entry.spectrogram_cache["times"], copy=True),
+                "freqs": np.array(entry.spectrogram_cache["freqs"], copy=True),
+            },
+            "view_range_x": entry.view_range_x,
+            "view_range_y": entry.view_range_y,
         }
 
     def _current_export_payload(self):
@@ -985,6 +1388,28 @@ class Controller(QObject):
                 "Exporting pitch CSV in background...",
             )
 
+    def _handle_export_spectrogram(self):
+        if self.current_entry_index < 0 or self.current_entry_index >= len(self.batch_entries):
+            self.window.statusbar.showMessage("No audio loaded.", 3000)
+            return
+        filepath = self._choose_save_file(
+            "Export Spectrogram Plot",
+            self._default_export_path("_spectrogram.png"),
+            "PNG Images (*.png)",
+        )
+        if not filepath:
+            return
+        self._save_current_entry_state()
+        entry = self._entry_export_payload(self.batch_entries[self.current_entry_index])
+        self._start_export_task(
+            {
+                "type": "spectrogram_plot",
+                "filepath": filepath,
+                "entry": entry,
+            },
+            "Exporting spectrogram plot in background...",
+        )
+
     def _handle_export_praat(self):
         if self.current_entry_index < 0:
             return
@@ -1018,6 +1443,25 @@ class Controller(QObject):
                 "entries": entries,
             },
             f"Exporting batch pitch CSVs for {len(entries)} files in background...",
+        )
+
+    def _handle_batch_export_spectrograms(self):
+        if not self.batch_entries:
+            self.window.statusbar.showMessage("No audio files imported.", 3000)
+            return
+        default_dir = str(Path(self.batch_entries[0].filepath).resolve().parent)
+        output_dir = self._choose_directory("Export Batch Spectrogram Plots", default_dir)
+        if not output_dir:
+            return
+        self._save_current_entry_state()
+        entries = [self._entry_export_payload(entry) for entry in self.batch_entries]
+        self._start_export_task(
+            {
+                "type": "batch_spectrogram_plots",
+                "output_dir": output_dir,
+                "entries": entries,
+            },
+            f"Exporting batch spectrogram plots for {len(entries)} files in background...",
         )
 
     def _handle_export_acoustic_csv(self):
@@ -1160,7 +1604,7 @@ class Controller(QObject):
         if not self._pending_export_task:
             return
         task_type = self._pending_export_task.get("type")
-        if task_type in {"pitch_csv", "praat_pitch", "acoustic_csv", "export_all"}:
+        if task_type in {"pitch_csv", "praat_pitch", "acoustic_csv", "export_all", "spectrogram_plot"}:
             if self.current_entry_index >= 0:
                 self._mark_entries_clean([self.current_entry_index])
             return
