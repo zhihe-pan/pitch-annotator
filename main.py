@@ -507,7 +507,12 @@ class ExportWorker(QObject):
                 return
 
             if task_type == "praat_pitch":
-                export_praat_pitch(task["filepath"], task["timestamps"], task["pitch_values"])
+                export_praat_pitch(
+                    task["filepath"],
+                    task["timestamps"],
+                    task["pitch_values"],
+                    pitch_ceiling=task["pitch_params"].get("pitch_ceiling"),
+                )
                 self.finished.emit(f"Exported to {task['filepath']}")
                 return
 
@@ -601,7 +606,12 @@ class ExportWorker(QObject):
                     audio_path=task["audio_path"],
                     segment_labels=task["segment_labels"],
                 )
-                export_praat_pitch(task["praat_path"], task["timestamps"], task["pitch_values"])
+                export_praat_pitch(
+                    task["praat_path"],
+                    task["timestamps"],
+                    task["pitch_values"],
+                    pitch_ceiling=task["pitch_params"].get("pitch_ceiling"),
+                )
                 row = compute_feature_row_with_pitch_overrides(
                     task["audio_path"],
                     task["pitch_params"],
@@ -1422,6 +1432,7 @@ class Controller(QObject):
                     "filepath": filepath,
                     "timestamps": payload["timestamps"],
                     "pitch_values": payload["pitch_values"],
+                    "pitch_params": payload["pitch_params"],
                 },
                 "Exporting Praat Pitch in background...",
             )

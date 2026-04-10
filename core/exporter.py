@@ -45,59 +45,70 @@ def export_csv(filepath: str, timestamps: np.ndarray, pitch_values: np.ndarray, 
             rows.append(row)
         writer.writerows(rows)
 
-def export_praat_pitch(filepath: str, timestamps: np.ndarray, pitch_values: np.ndarray):
+def export_praat_pitch(
+    filepath: str,
+    timestamps: np.ndarray,
+    pitch_values: np.ndarray,
+    pitch_ceiling: float | None = None,
+):
     """
-    Export to standard Praat Pitch Short Text File.
-    Format:
-    File type = "ooTextFile"
-    Object class = "Pitch 1"
-    
-    xmin
-    xmax
-    nx
-    dx
-    x1
-    <nx times>:
-        intensity
-        nCandidates
-        candidate1_frequency
-        candidate1_strength
+    Export to a Praat-compatible text Pitch object.
+
+    We intentionally use the verbose text format instead of an abbreviated
+    short-text variant, because Praat accepts it reliably and it is less
+    error-prone when generated outside Praat.
     """
-    if len(timestamps) == 0:
+    timestamps = np.asarray(timestamps, dtype=float)
+    pitch_values = np.asarray(pitch_values, dtype=float)
+    n_frames = min(len(timestamps), len(pitch_values))
+    if n_frames == 0:
         return
-        
-    n_frames = len(timestamps)
-    # Estimate time step dx from the first two timestamps
+
+    timestamps = timestamps[:n_frames]
+    pitch_values = pitch_values[:n_frames]
+
+    # Estimate time step dx from the first two timestamps.
     if n_frames > 1:
-        dx = timestamps[1] - timestamps[0]
+        dx = float(timestamps[1] - timestamps[0])
     else:
-        dx = 0.01 # Default fallback
-    
-    x1 = timestamps[0]
-    xmin = x1 - dx / 2
-    xmax = timestamps[-1] + dx / 2
-    
+        dx = 0.01  # Default fallback.
+
+    x1 = float(timestamps[0])
+    xmin = x1 - dx / 2.0
+    xmax = float(timestamps[-1] + dx / 2.0)
+    if pitch_ceiling is None or not np.isfinite(pitch_ceiling) or float(pitch_ceiling) <= 0:
+        finite_pitch = pitch_values[np.isfinite(pitch_values) & (pitch_values > 0)]
+        pitch_ceiling = float(np.nanmax(finite_pitch)) if len(finite_pitch) else 800.0
+
+    def format_number(value: float) -> str:
+        return np.format_float_positional(float(value), trim="-", precision=10)
+
     lines = [
         'File type = "ooTextFile"',
         'Object class = "Pitch 1"',
         '',
-        f'{xmin:.6f}',
-        f'{xmax:.6f}',
-        f'{n_frames}',
-        f'{dx:.6f}',
-        f'{x1:.6f}'
+        f"xmin = {format_number(xmin)}",
+        f"xmax = {format_number(xmax)}",
+        f"nx = {n_frames}",
+        f"dx = {format_number(dx)}",
+        f"x1 = {format_number(x1)}",
+        f"ceiling = {format_number(float(pitch_ceiling))}",
+        "maxnCandidates = 1",
+        "frame []:",
     ]
-    
-    for p in pitch_values:
-        # Intensity = 1 for simplicity
-        lines.append('1.0')
-        lines.append('1')  # 1 candidate
-        if np.isnan(p):
-            lines.append('0.0') # Unvoiced freq = 0
-            lines.append('0.0') # Strength = 0
+
+    for index, value in enumerate(pitch_values, start=1):
+        lines.append(f"    frame [{index}]:")
+        lines.append("        intensity = 1")
+        lines.append("        nCandidates = 1")
+        lines.append("        candidate []:")
+        lines.append("            candidate [1]:")
+        if np.isnan(value) or value <= 0:
+            lines.append("                frequency = 0")
+            lines.append("                strength = 0")
         else:
-            lines.append(f'{p:.6f}')
-            lines.append('1.0') # Strength = 1
-            
-    with open(filepath, 'w') as f:
-        f.write('\n'.join(lines) + '\n')
+            lines.append(f"                frequency = {format_number(float(value))}")
+            lines.append("                strength = 1")
+
+    with open(filepath, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(lines) + "\n")
