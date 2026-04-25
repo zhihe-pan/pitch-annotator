@@ -2,6 +2,10 @@
 
 A desktop GUI tool for manual correction of pitch (F0) tracks in speech and voice research. Built with PySide6, pyqtgraph, and Parselmouth.
 
+> This tool was created through **vibe coding** and is under active improvement. Feedback and suggestions are welcome via [Issues](https://github.com/zhihe-pan/pitch-annotator/issues).
+
+[中文说明](README_zh-CN.md)
+
 <p align="center">
   <img src="pitch_annotator.png" alt="Pitch Annotator screenshot" width="800"/>
 </p>
