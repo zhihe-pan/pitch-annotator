@@ -3,7 +3,8 @@ import math
 
 from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout,
                                QVBoxLayout, QListWidget, QListWidgetItem,
-                               QStatusBar, QLabel, QGroupBox)
+                               QStatusBar, QLabel, QGroupBox, QSplitter,
+                               QSplitterHandle)
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -63,6 +64,14 @@ class MainWindow(QMainWindow):
                 subcontrol-origin: margin;
                 padding: 0 3px;
             }
+            QSplitter::handle {
+                background-color: #555555;
+                width: 3px;
+                margin: 1px 0;
+            }
+            QSplitter::handle:hover {
+                background-color: #888888;
+            }
         """)
 
         central_widget = QWidget()
@@ -71,8 +80,7 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(central_widget)
 
         sidebar = QWidget()
-        sidebar.setMinimumWidth(300)
-        sidebar.setMaximumWidth(420)
+        sidebar.setMinimumWidth(120)
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         sidebar_layout.setSpacing(8)
@@ -89,9 +97,30 @@ class MainWindow(QMainWindow):
         self.canvas = PitchCanvas()
         self.control_panel = ControlPanel()
 
-        layout.addWidget(sidebar, stretch=0)
-        layout.addWidget(self.canvas, stretch=1)
-        layout.addWidget(self.control_panel)
+        right_splitter = QSplitter(Qt.Horizontal)
+        right_splitter.setHandleWidth(4)
+        right_splitter.addWidget(self.canvas)
+        right_splitter.addWidget(self.control_panel)
+        right_splitter.setSizes([600, 250])
+        right_splitter.setCollapsible(0, False)
+        right_splitter.setCollapsible(1, False)
+        right_splitter.setStretchFactor(0, 1)
+        right_splitter.setStretchFactor(1, 0)
+
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setHandleWidth(4)
+        splitter.addWidget(sidebar)
+        splitter.addWidget(right_splitter)
+        splitter.setSizes([300, 650])
+        splitter.setCollapsible(0, False)
+        splitter.setCollapsible(1, False)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        layout.addWidget(splitter)
+        for handle in splitter.findChildren(QSplitterHandle):
+            handle.setCursor(Qt.SplitHCursor)
+        for handle in right_splitter.findChildren(QSplitterHandle):
+            handle.setCursor(Qt.SplitHCursor)
         
         self._setup_menus()
         self._setup_statusbar()

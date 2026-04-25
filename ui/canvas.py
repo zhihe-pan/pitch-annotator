@@ -1,6 +1,6 @@
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QWidget as QtWidget, QMenu, QGraphicsRectItem
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QWidget as QtWidget, QMenu, QGraphicsRectItem, QScrollBar
 from PySide6.QtCore import Qt, Signal, QRectF
 from PySide6.QtGui import QCursor, QColor, QPen, QBrush
 
@@ -187,6 +187,14 @@ class PitchCanvas(QWidget):
         self._segment_spans = []
         self.audio_end_time = 1.0
         self.segment_band_fraction = 0.045
+        self._SCROLLBAR_TIME_SCALE = 10000
+        self.time_scrollbar = QScrollBar(Qt.Horizontal)
+        self.time_scrollbar.setMinimum(0)
+        self.time_scrollbar.setMaximum(int(self.audio_end_time * self._SCROLLBAR_TIME_SCALE))
+        self.time_scrollbar.setPageStep(int(self.audio_end_time * self._SCROLLBAR_TIME_SCALE))
+        self.time_scrollbar.valueChanged.connect(self._on_time_scrollbar_moved)
+        self.layout.addWidget(self.time_scrollbar)
+        self._scrollbar_updating = False
         self.segment_color_map = {
             0: QColor(255, 210, 80, 200),   # silence
             1: QColor(90, 90, 90, 200),     # voiceless
@@ -459,6 +467,7 @@ class PitchCanvas(QWidget):
         self.region_item.hide()
         self._update_selected_region_visual()
         self.selection_changed.emit(0.0, 0.0)
+        self._configure_time_scrollbar()
 
     def update_segments(self, timestamps, segment_labels):
         for item in self.segment_items:
@@ -513,6 +522,7 @@ class PitchCanvas(QWidget):
 
     def _handle_view_range_changed(self, *_args):
         self._refresh_segment_band_positions()
+        self._update_scrollbar_from_view()
 
     def update_pitch(self, timestamps, pitch_values):
         """
@@ -606,3 +616,33 @@ class PitchCanvas(QWidget):
         pass
         # A simple implementation can just rely on adding/removing for now. 
         # Dragging requires overriding mouseDragEvent which gets complex with pyqtgraph's default viewbox.
+
+    def _configure_time_scrollbar(self):
+        max_val = int(self.audio_end_time * self._SCROLLBAR_TIME_SCALE)
+        self.time_scrollbar.setMaximum(max_val)
+        self._update_scrollbar_from_view()
+
+    def _on_time_scrollbar_moved(self, value):
+        if self._scrollbar_updating:
+            return
+        view_left = value / self._SCROLLBAR_TIME_SCALE
+        x_range, _ = self.vb.viewRange()
+        view_width = x_range[1] - x_range[0]
+        new_min = max(0.0, view_left)
+        new_max = min(self.audio_end_time, view_left + view_width)
+        if new_max <= new_min:
+            return
+        self._scrollbar_updating = True
+        self.vb.setXRange(new_min, new_max, padding=0)
+        self._scrollbar_updating = False
+
+    def _update_scrollbar_from_view(self):
+        if self._scrollbar_updating:
+            return
+        x_range, _ = self.vb.viewRange()
+        view_left = x_range[0]
+        view_width = x_range[1] - x_range[0]
+        self._scrollbar_updating = True
+        self.time_scrollbar.setPageStep(int(view_width * self._SCROLLBAR_TIME_SCALE))
+        self.time_scrollbar.setValue(int(view_left * self._SCROLLBAR_TIME_SCALE))
+        self._scrollbar_updating = False

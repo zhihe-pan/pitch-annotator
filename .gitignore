@@ -19,3 +19,8 @@ source_release/
 build 2.py
 
 .github/workflows/
+
+# Runtime output
+output/
+startup_logs/
+stim/

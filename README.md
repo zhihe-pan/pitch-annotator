@@ -1,98 +1,112 @@
-# PitchAnnotator
+# Pitch Annotator
 
-PitchAnnotator 是一个用于人工校正音高轨迹（F0）的桌面工具，适用于语音和声学研究流程。
+A desktop GUI tool for manual correction of pitch (F0) tracks in speech and voice research. Built with PySide6, pyqtgraph, and Parselmouth.
 
-它支持：
+<p align="center">
+  <img src="pitch_annotator.png" alt="Pitch Annotator screenshot" width="800"/>
+</p>
 
-- 批量导入音频并逐条检查
-- 频谱图 + F0 + F1/F2/F3 联合可视化
-- Praat 风格参数提取音高
-- 手动加点、删点、拖点、区间整体平移
-- 区间标注 `Silence / Voiceless / Voiced`
-- 播放原始选区和 F0 合成轨迹
-- 导出当前文件或批量文件的结果
-  - `Export CSV...`
-  - `Export Spectrogram Plot...`
-  - `Export Batch Pitch CSVs...`
-  - `Export Batch Spectrogram Plots...`
-  - `Export Praat .Pitch...`
-  - `Export Acoustic Features CSV...`
-  - `Export Batch Acoustic Features CSV...`
-  - `Export All...`
-  - `Export Batch All...`
+## Features
 
-详细中文使用说明见 [USAGE_zh-CN.md](/Users/caddice/Desktop/Acoustic/USAGE_zh-CN.md)。
+- **Batch import** audio files (.wav, .mp3, .m4a, .flac, .aiff, .ogg) and review them one by one
+- **Spectrogram + pitch + formants** visualization in a single view
+- **Praat-style** pitch extraction with configurable parameters (pitch floor/ceiling, voicing threshold, octave cost, etc.)
+- **Manual editing** — add, remove, and drag individual pitch points; shift entire regions up/down
+- **Segment labeling** — mark regions as Silence / Voiceless / Voiced with color bands
+- **Zoom & navigate** — mouse wheel zoom anchored to the pitch contour; horizontal scrollbar for precise time-axis positioning
+- **Resizable panels** — drag splitters to adjust sidebar and control panel widths
+- **Playback** — play original audio selection or synthesized F0 tone
+- **Undo** support (up to 100 steps)
+- **Export** in multiple formats:
+  - CSV (pitch values with segment labels & parameters)
+  - Praat `.Pitch` file
+  - Spectrogram plot (PNG)
+  - Acoustic features CSV (intensity, jitter, shimmer, HNR, COG, spectral slope, F0 statistics, formant means)
+  - Batch export for all loaded audio files
+- **External Praat** — optionally use a local Praat installation for pitch extraction
 
-## 环境要求
+## Installation
 
-- Python 3.11 或 3.12
-- 依赖见 `requirements.txt`
-- 建议安装 Praat（用于外部 Praat filtered autocorrelation 路径）
-
-Windows 上如需稳定走外部 Praat，推荐：
-
-1. 安装 Praat
-2. 配置环境变量 `PRAAT_PATH` 指向 `Praat.exe` 或 `praatcon.exe`
-3. 在应用状态栏确认 `Pitch source: External Praat filtered AC`
-
-## 从源码运行
-
-macOS:
+**Requirements:** Python 3.11 or 3.12
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+git clone https://github.com/zhihe-pan/pitch-annotator.git
+cd pitch-annotator
 python -m pip install -r requirements.txt
 python main.py
 ```
 
-Windows:
+### Optional: External Praat
 
-```bat
-python -m venv venv
-venv\Scripts\activate
-python -m pip install -r requirements.txt
-python main.py
-```
+Install [Praat](https://www.fon.hum.uva.nl/praat/) and set the environment variable `PRAAT_PATH` pointing to `Praat.exe` (Windows) or `praatcon` (macOS/Linux). The status bar will show "Pitch source: External Praat filtered AC" when detected.
 
-也可以直接双击：
+## Usage
 
-- `Start_PitchAnnotator.command`（macOS）
-- `Start_PitchAnnotator.bat`（Windows）
+### Mouse
 
-## 给研究助理的发放建议
+| Action | Gesture |
+|--------|---------|
+| Select pitch point | Left-click |
+| Create pitch point | Alt + Left-click |
+| Delete pitch point | Alt + Shift + Left-click |
+| Drag pitch point | Left-click + drag on a point |
+| Create selection region | Left-click + drag on empty space |
+| Shift selected region vertically | Shift + Left-click + drag |
+| Zoom in/out | Mouse wheel (anchored to pitch contour) |
+| Scroll time axis | Drag horizontal scrollbar below spectrogram |
 
-建议发送“源码压缩包”，且仅包含运行所需内容：
+### Keyboard
 
-- `main.py`
-- `backend/`
-- `core/`
-- `ui/`
-- `acoustic_analysis/`
-- `requirements.txt`
-- `README.md`
-- `USAGE_zh-CN.md`
-- `Start_PitchAnnotator.command`
-- `Start_PitchAnnotator.bat`
+| Shortcut | Action |
+|----------|--------|
+| Space | Play selected region (audio) |
+| Shift + Space | Play selected region (F0 tone) |
+| Ctrl+Z | Undo |
+| Up / Down | Previous / next audio file |
+| Ctrl+Shift+E | Export all for current file |
+| Ctrl+Alt+Shift+E | Export all for batch |
 
-建议排除：
+### Workflow
 
-- `.git/`
-- `venv/`
-- `build/` `dist/` `release/`
-- `__pycache__/`
-- 临时导出结果和无关测试音频
+1. **File → Import Audio Files…** — select one or more audio files, set initial pitch parameters
+2. Inspect the spectrogram and pitch contour — zoom, pan, scroll as needed
+3. Toggle the **Region** tool in the control panel to select a time range
+4. Mark the region as Voiced / Voiceless / Silence
+5. Manually adjust pitch points: Alt+Click to add, Alt+Shift+Click to remove, drag to reposition
+6. **Export** — use File menu or shortcuts to save results
 
-## 打包桌面版
+### Pitch Parameters
 
-在对应系统本机执行：
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| Pitch floor | Minimum F0 (Hz) | 50 |
+| Pitch ceiling | Maximum F0 (Hz) | 800 |
+| Time step | Frame step (0 = auto) | 0.0 s |
+| Filtered AC attenuation | Attenuation at ceiling frequency | 0.03 |
+| Voicing threshold | Amplitude threshold for voicing | 0.50 |
+| Silence threshold | Amplitude below which = silence | 0.09 |
+| Octave cost | Penalty for octave jumps | 0.055 |
+| Octave jump cost | Penalty for octave discontinuities | 0.35 |
+| Voiced/unvoiced cost | Cost of voicing state change | 0.14 |
+
+## Build standalone app
 
 ```bash
 python -m pip install -r requirements.txt
 python build.py
 ```
 
-生成目录：
+Outputs appear in `dist/` (PyInstaller) and `release/` (distributable archive).
 
-- `dist/`（PyInstaller 原始输出）
-- `release/`（可分发压缩包）
+## Tech stack
+
+- **Python 3.11+**
+- **PySide6** — Qt GUI framework
+- **pyqtgraph** — high-performance plotting
+- **praat-parselmouth** — acoustic analysis (spectrogram, pitch, formants)
+- **librosa, scipy, numpy, soundfile** — audio processing
+- **PyInstaller** — desktop packaging
+
+## License
+
+MIT

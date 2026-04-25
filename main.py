@@ -813,7 +813,6 @@ class Controller(QObject):
         dialog = QFileDialog(self.window, "Import Audio Files", start_dir)
         dialog.setFileMode(QFileDialog.ExistingFiles)
         dialog.setAcceptMode(QFileDialog.AcceptOpen)
-        dialog.setOption(QFileDialog.DontUseNativeDialog, True)
         self._configure_file_dialog(dialog, start_dir)
         dialog.setNameFilters(
             [
@@ -1247,7 +1246,6 @@ class Controller(QObject):
         dialog = QFileDialog(self.window, title, default_path)
         dialog.setAcceptMode(QFileDialog.AcceptSave)
         dialog.setFileMode(QFileDialog.AnyFile)
-        dialog.setOption(QFileDialog.DontUseNativeDialog, True)
         self._configure_file_dialog(dialog, default_path)
         dialog.setNameFilter(file_filter)
         if default_path:
@@ -1261,7 +1259,6 @@ class Controller(QObject):
         dialog = QFileDialog(self.window, title, start_dir)
         dialog.setFileMode(QFileDialog.Directory)
         dialog.setOption(QFileDialog.ShowDirsOnly, True)
-        dialog.setOption(QFileDialog.DontUseNativeDialog, True)
         self._configure_file_dialog(dialog, start_dir)
         if dialog.exec() != QFileDialog.Accepted:
             return ""
