@@ -726,6 +726,7 @@ class Controller(QObject):
         self.window.current_audio_index_changed.connect(self._handle_audio_index_changed)
         self.window.next_audio_requested.connect(self._handle_next_audio)
         self.window.previous_audio_requested.connect(self._handle_previous_audio)
+        self.window.clear_audio_list_requested.connect(self._handle_clear_audio_list)
         self.window.export_csv_requested.connect(self._handle_export_csv)
         self.window.export_spectrogram_requested.connect(self._handle_export_spectrogram)
         self.window.batch_export_pitch_csv_requested.connect(self._handle_batch_export_pitch_csv)
@@ -857,6 +858,36 @@ class Controller(QObject):
         prev_index = max(self.current_entry_index - 1, 0)
         self.window.set_current_audio_index(prev_index)
         self._switch_to_entry(prev_index)
+
+    def _handle_clear_audio_list(self):
+        if not self.batch_entries:
+            return
+        reply = QMessageBox.question(
+            self.window,
+            "Clear File List",
+            "Are you sure you want to clear the file list?\n\n"
+            "Make sure you have exported your data before proceeding.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        self.batch_entries.clear()
+        self.current_entry_index = -1
+        self._undo_stack.clear()
+        self.processor.reset()
+        self.state.reset()
+        self.window.set_audio_files([])
+        self.window.canvas.update_pitch(np.array([]), np.array([]))
+        self.window.canvas.update_segments(np.array([]), np.array([]))
+        self.window.canvas.update_formants(np.array([]), np.array([]), np.array([]), np.array([]))
+        self.window.canvas.update_quantile_lines(np.nan, np.nan, np.nan)
+        self.window.canvas.img_item.clear()
+        self.window.update_current_file("")
+        self.window.update_stats(np.nan, np.nan, np.nan, 0.0)
+        self.window.update_durations(0.0, 0.0)
+        self.window.update_pitch_source("")
+        self.window.statusbar.showMessage("File list cleared.", 3000)
 
     def _switch_to_entry(self, index):
         if index < 0 or index >= len(self.batch_entries):

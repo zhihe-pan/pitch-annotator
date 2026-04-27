@@ -29,6 +29,14 @@ class AudioProcessor:
         self.filtered_ac_attenuation_at_top = 0.03
         self._praat_executable = None
         self._praat_checked = False
+
+    def reset(self):
+        self.audio_data = None
+        self.sr = None
+        self.loaded_filepath = None
+        self.S_db = None
+        self.spec_times = None
+        self.spec_freqs = None
     
     def _maximum_formant_for_file(self):
         filepath = "" if self.loaded_filepath is None else str(self.loaded_filepath).lower()

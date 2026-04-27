@@ -4,7 +4,7 @@ import math
 from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout,
                                QVBoxLayout, QListWidget, QListWidgetItem,
                                QStatusBar, QLabel, QGroupBox, QSplitter,
-                               QSplitterHandle)
+                               QSplitterHandle, QPushButton)
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -35,6 +35,7 @@ class MainWindow(QMainWindow):
     current_audio_index_changed = Signal(int)
     next_audio_requested = Signal()
     previous_audio_requested = Signal()
+    clear_audio_list_requested = Signal()
 
     def __init__(self):
         super().__init__()
@@ -92,6 +93,11 @@ class MainWindow(QMainWindow):
         self.lbl_batch_hint = QLabel("Import multiple audio files, then select one here or use Up/Down.")
         self.lbl_batch_hint.setWordWrap(True)
         files_layout.addWidget(self.lbl_batch_hint)
+
+        self.btn_clear_list = QPushButton("Clear File List")
+        self.btn_clear_list.clicked.connect(self.clear_audio_list_requested.emit)
+        files_layout.addWidget(self.btn_clear_list)
+
         sidebar_layout.addWidget(group_files)
 
         self.canvas = PitchCanvas()
