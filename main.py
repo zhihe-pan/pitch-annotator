@@ -1,7 +1,10 @@
 import csv
 import math
+import os
 import re
+import signal
 import sys
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -1838,12 +1841,60 @@ class Controller(QObject):
 
 
 def main():
+    if sys.platform == "darwin":
+        try:
+            import ctypes
+            ctypes.cdll.LoadLibrary(
+                "/System/Library/Frameworks/Foundation.framework/Foundation"
+            )
+            activity = ctypes.c_void_p()
+            reason = ctypes.c_char_p(b"Prevent App Nap for Pitch Annotator")
+            
+            def _begin_activity():
+                nonlocal activity
+                NSProcessInfo = ctypes.c_void_p.in_dll(
+                    ctypes.cdll,
+                    "OBJC_CLASS_$_NSProcessInfo"
+                )
+                objc = ctypes.cdll
+                objc.objc_getClass.restype = ctypes.c_void_p
+                objc.sel_registerName.restype = ctypes.c_void_p
+                info = objc.objc_msgSend(
+                    objc.objc_getClass(b"NSProcessInfo"),
+                    objc.sel_registerName(b"processInfo"),
+                )
+                activity = objc.objc_msgSend(
+                    info,
+                    objc.sel_registerName(
+                        b"beginActivityWithOptions:reason:"
+                    ),
+                    ctypes.c_uint64(0x00FF00000000),
+                    reason,
+                )
+            _begin_activity()
+        except Exception:
+            pass
+
+    def _excepthook(exc_type, exc_value, exc_tb):
+        if issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
+            sys.__excepthook__(exc_type, exc_value, exc_tb)
+            return
+        tb_str = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        print(f"Unhandled exception (suppressed):\n{tb_str}", file=sys.stderr)
+
+    sys.excepthook = _excepthook
+
+    signal.signal(signal.SIGINT, lambda s, f: QApplication.quit())
+    signal.signal(signal.SIGTERM, lambda s, f: QApplication.quit())
+
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
     window = MainWindow()
     state = PitchState()
     processor = AudioProcessor()
     controller = Controller(window, state, processor)
     app.aboutToQuit.connect(controller.cleanup)
+    app.lastWindowClosed.connect(controller.cleanup)
     window.show()
     window.raise_()
     window.activateWindow()

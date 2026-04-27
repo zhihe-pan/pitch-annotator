@@ -4,7 +4,7 @@ import math
 from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout,
                                QVBoxLayout, QListWidget, QListWidgetItem,
                                QStatusBar, QLabel, QGroupBox, QSplitter,
-                               QSplitterHandle, QPushButton)
+                               QSplitterHandle, QPushButton, QApplication)
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -262,3 +262,4 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         super().closeEvent(event)
+        QApplication.quit()
