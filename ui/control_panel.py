@@ -17,8 +17,8 @@ class ControlPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumWidth(180)
-        self.setMaximumWidth(500)
+        self.setMinimumWidth(320)
+        self.setMaximumWidth(800)
         
         main_layout = QVBoxLayout(self)
         

@@ -40,7 +40,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.close_handler = None
         self.setWindowTitle("Pitch Annotator")
-        self.resize(1200, 800)
+        self.resize(1700, 850)
         
         # Apply simple dark theme
         self.setStyleSheet("""
@@ -101,17 +101,17 @@ class MainWindow(QMainWindow):
         right_splitter.setHandleWidth(4)
         right_splitter.addWidget(self.canvas)
         right_splitter.addWidget(self.control_panel)
-        right_splitter.setSizes([600, 250])
+        right_splitter.setSizes([650, 400])
         right_splitter.setCollapsible(0, False)
         right_splitter.setCollapsible(1, False)
-        right_splitter.setStretchFactor(0, 1)
-        right_splitter.setStretchFactor(1, 0)
+        right_splitter.setStretchFactor(0, 3)
+        right_splitter.setStretchFactor(1, 2)
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.setHandleWidth(4)
         splitter.addWidget(sidebar)
         splitter.addWidget(right_splitter)
-        splitter.setSizes([300, 650])
+        splitter.setSizes([350, 850])
         splitter.setCollapsible(0, False)
         splitter.setCollapsible(1, False)
         splitter.setStretchFactor(0, 0)

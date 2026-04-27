@@ -103,7 +103,6 @@ class PitchCanvas(QWidget):
                 self._get_zoom_anchor_y,
             )
         )
-        self.layout.addWidget(self.plot_widget)
         self.plot_widget.setBackground('w')
         self.plot_widget.showGrid(x=False, y=False)
         self.plot_widget.showAxis('right')
@@ -187,6 +186,19 @@ class PitchCanvas(QWidget):
         self._segment_spans = []
         self.audio_end_time = 1.0
         self.segment_band_fraction = 0.045
+        self._spectrogram_y_min = 0.0
+        self._spectrogram_y_max = 1000.0
+        self._SCROLLBAR_FREQ_SCALE = 100
+        self.freq_scrollbar = QScrollBar(Qt.Vertical)
+        self.freq_scrollbar.setMinimum(0)
+        self.freq_scrollbar.valueChanged.connect(self._on_freq_scrollbar_moved)
+
+        plot_and_freq_layout = QHBoxLayout()
+        plot_and_freq_layout.setSpacing(0)
+        plot_and_freq_layout.addWidget(self.plot_widget)
+        plot_and_freq_layout.addWidget(self.freq_scrollbar)
+        self.layout.addLayout(plot_and_freq_layout)
+
         self._SCROLLBAR_TIME_SCALE = 10000
         self.time_scrollbar = QScrollBar(Qt.Horizontal)
         self.time_scrollbar.setMinimum(0)
@@ -457,10 +469,13 @@ class PitchCanvas(QWidget):
         x_min, x_max = spec_times[0], spec_times[-1]
         self.audio_end_time = float(x_max)
         y_min, y_max = spec_freqs[0], spec_freqs[-1]
+        self._spectrogram_y_min = float(y_min)
+        self._spectrogram_y_max = float(y_max)
         self.img_item.setRect(QRectF(x_min, y_min, x_max - x_min, y_max - y_min))
         self.plot_widget.setLimits(xMin=0.0, xMax=x_max, yMin=y_min, yMax=y_max)
         self.plot_widget.setXRange(0.0, x_max, padding=0)
         self.plot_widget.setYRange(y_min, y_max, padding=0)
+        self._update_scrollbar_from_view()
         default_end = min(x_max, max(0.25, x_max * 0.2))
         self.region_item.setBounds([0.0, x_max])
         self.region_item.setRegion([0.0, default_end])
@@ -636,13 +651,34 @@ class PitchCanvas(QWidget):
         self.vb.setXRange(new_min, new_max, padding=0)
         self._scrollbar_updating = False
 
+    def _on_freq_scrollbar_moved(self, value):
+        if self._scrollbar_updating:
+            return
+        scroll_pos = value / self._SCROLLBAR_FREQ_SCALE
+        view_bottom = self._spectrogram_y_min + scroll_pos
+        _, y_range = self.vb.viewRange()
+        view_span = y_range[1] - y_range[0]
+        new_y_min = view_bottom
+        new_y_max = view_bottom + view_span
+        self._scrollbar_updating = True
+        self.vb.setYRange(new_y_min, new_y_max, padding=0)
+        self._scrollbar_updating = False
+
     def _update_scrollbar_from_view(self):
         if self._scrollbar_updating:
             return
-        x_range, _ = self.vb.viewRange()
+        x_range, y_range = self.vb.viewRange()
         view_left = x_range[0]
         view_width = x_range[1] - x_range[0]
+        view_bottom = y_range[0]
+        view_span = y_range[1] - y_range[0]
+        total_y_range = self._spectrogram_y_max - self._spectrogram_y_min
+        scroll_pos = max(0.0, view_bottom - self._spectrogram_y_min)
+        freq_max = max(0, int((total_y_range - view_span) * self._SCROLLBAR_FREQ_SCALE))
         self._scrollbar_updating = True
         self.time_scrollbar.setPageStep(int(view_width * self._SCROLLBAR_TIME_SCALE))
         self.time_scrollbar.setValue(int(view_left * self._SCROLLBAR_TIME_SCALE))
+        self.freq_scrollbar.setMaximum(freq_max)
+        self.freq_scrollbar.setPageStep(int(view_span * self._SCROLLBAR_FREQ_SCALE))
+        self.freq_scrollbar.setValue(int(scroll_pos * self._SCROLLBAR_FREQ_SCALE))
         self._scrollbar_updating = False
