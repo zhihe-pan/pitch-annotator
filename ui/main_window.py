@@ -107,7 +107,7 @@ class MainWindow(QMainWindow):
         right_splitter.setHandleWidth(4)
         right_splitter.addWidget(self.canvas)
         right_splitter.addWidget(self.control_panel)
-        right_splitter.setSizes([650, 400])
+        right_splitter.setSizes([680, 380])
         right_splitter.setCollapsible(0, False)
         right_splitter.setCollapsible(1, False)
         right_splitter.setStretchFactor(0, 3)

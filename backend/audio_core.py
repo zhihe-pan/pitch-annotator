@@ -269,9 +269,10 @@ class AudioProcessor:
         extracted_values[extracted_values == 0] = np.nan
 
         estimated_values = np.full(len(region_times), np.nan, dtype=float)
-        seed_freq = np.nanmedian(extracted_values)
-        if np.isnan(seed_freq):
+        if np.all(np.isnan(extracted_values)):
             seed_freq = (pitch_floor + pitch_ceiling) / 2.0
+        else:
+            seed_freq = np.nanmedian(extracted_values)
 
         for idx, region_time in enumerate(region_times):
             nearest = np.abs(extracted_times - region_time).argmin()

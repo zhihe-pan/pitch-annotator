@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
                                QLabel, QSpinBox, QDoubleSpinBox, QSlider, QComboBox,
                                QPushButton, QGroupBox, QFormLayout)
 from PySide6.QtCore import Signal, Qt
@@ -17,29 +17,32 @@ class ControlPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumWidth(320)
-        self.setMaximumWidth(800)
-        
+        self.setMinimumWidth(280)
+        self.setMaximumWidth(700)
+
         main_layout = QVBoxLayout(self)
-        
+        main_layout.setSpacing(6)
+        main_layout.setContentsMargins(4, 4, 4, 4)
+
         # Audio Parameters Group
         group_params = QGroupBox("Pitch Parameters")
         form_layout = QFormLayout()
+        form_layout.setSpacing(4)
+        form_layout.setContentsMargins(6, 8, 6, 6)
 
         self.lbl_pitch_method = QLabel("Pitch method: Filtered AC")
-        self.lbl_pitch_method.setWordWrap(True)
         form_layout.addRow(self.lbl_pitch_method)
-        
+
         self.spin_floor = QSpinBox()
         self.spin_floor.setRange(20, 300)
         self.spin_floor.setValue(50)
         self.spin_floor.setSuffix(" Hz")
-        
+
         self.spin_ceiling = QSpinBox()
         self.spin_ceiling.setRange(100, 1200)
         self.spin_ceiling.setValue(800)
         self.spin_ceiling.setSuffix(" Hz")
-        
+
         self.spin_step = QDoubleSpinBox()
         self.spin_step.setRange(0.0, 0.1)
         self.spin_step.setSingleStep(0.005)
@@ -82,40 +85,50 @@ class ControlPanel(QWidget):
         self.spin_voiced_unvoiced_cost.setSingleStep(0.01)
         self.spin_voiced_unvoiced_cost.setDecimals(2)
         self.spin_voiced_unvoiced_cost.setValue(0.14)
-        
+
         form_layout.addRow("Pitch Floor:", self.spin_floor)
-        form_layout.addRow("Pitch Top:", self.spin_ceiling)
+        form_layout.addRow("Pitch Ceiling:", self.spin_ceiling)
         form_layout.addRow("Time Step:", self.spin_step)
-        form_layout.addRow("Attenuation at Top:", self.spin_filtered_ac_attenuation)
+        form_layout.addRow("Attenuation:", self.spin_filtered_ac_attenuation)
         form_layout.addRow("Voicing Threshold:", self.spin_voicing_threshold)
         form_layout.addRow("Silence Threshold:", self.spin_silence_threshold)
         form_layout.addRow("Octave Cost:", self.spin_octave_cost)
         form_layout.addRow("Octave Jump Cost:", self.spin_octave_jump_cost)
         form_layout.addRow("Voiced/Unvoiced Cost:", self.spin_voiced_unvoiced_cost)
-        
-        btn_recompute = QPushButton("Recompute Initial Pitch")
-        self.btn_apply_all = QPushButton("Apply Current Params\nTo All Imported Files")
+
+        btn_recompute = QPushButton("Recompute")
+        btn_recompute.setMinimumHeight(28)
+        form_layout.addRow(btn_recompute)
+
+        self.btn_apply_all = QPushButton("Apply to All Files")
+        self.btn_apply_all.setMinimumHeight(28)
         self.btn_apply_all.setToolTip(
             "Copy the current pitch parameters to every imported audio file. "
             "This updates their defaults, but you should still review each file manually."
         )
-        self.btn_apply_all.setMinimumHeight(52)
-        form_layout.addRow(btn_recompute)
         form_layout.addRow(self.btn_apply_all)
+
         group_params.setLayout(form_layout)
-        
+
         # Editing Tools Group
         group_tools = QGroupBox("Manual Editing Tools")
         vbox_tools = QVBoxLayout()
-        
+        vbox_tools.setSpacing(3)
+
         self.btn_toggle_region = QPushButton("Show Region Box")
         self.btn_toggle_region.setCheckable(True)
-        
+
         btn_set_voiced = QPushButton("Set Region to Voiced")
         btn_set_unvoiced = QPushButton("Set Region to Unvoiced")
         btn_set_silence = QPushButton("Set Region to Silence")
-        
-        vbox_tools.addWidget(QLabel("Instructions:\n- Alt+Left Click: Add Snapped Point\n- Shift+Left Click: Remove Point\n- Space: Play Selected Region\n- Shift+Space: Play Pitch Track"))
+
+        instr = QLabel(
+            "Alt+Click: Add Point\n"
+            "Shift+Click: Remove Point\n"
+            "Space: Play Region\n"
+            "Shift+Space: Play Pitch Track"
+        )
+        vbox_tools.addWidget(instr)
         vbox_tools.addWidget(self.btn_toggle_region)
         vbox_tools.addWidget(btn_set_voiced)
         vbox_tools.addWidget(btn_set_unvoiced)
@@ -125,7 +138,7 @@ class ControlPanel(QWidget):
         group_playback = QGroupBox("Playback")
         playback_layout = QFormLayout()
         self.combo_audio_output = QComboBox()
-        playback_layout.addRow("Output Device:", self.combo_audio_output)
+        playback_layout.addRow("Output:", self.combo_audio_output)
         self.slider_volume = QSlider(Qt.Horizontal)
         self.slider_volume.setRange(0, 100)
         self.slider_volume.setValue(100)
@@ -135,13 +148,12 @@ class ControlPanel(QWidget):
         volume_row.addWidget(self.lbl_volume_value)
         playback_layout.addRow("Volume:", volume_row)
         group_playback.setLayout(playback_layout)
-        
+
         main_layout.addWidget(group_params)
         main_layout.addWidget(group_tools)
         main_layout.addWidget(group_playback)
         main_layout.addStretch()
 
-        # Connect internal signals
         btn_recompute.clicked.connect(self._on_recompute)
         self.btn_apply_all.clicked.connect(self.apply_params_to_all_requested.emit)
         self.btn_toggle_region.toggled.connect(self.region_toggled.emit)
@@ -150,7 +162,7 @@ class ControlPanel(QWidget):
         btn_set_silence.clicked.connect(self.set_region_silence.emit)
         self.slider_volume.valueChanged.connect(self._on_volume_changed)
         self.combo_audio_output.currentIndexChanged.connect(self.audio_output_device_changed.emit)
-        
+
     def _on_recompute(self):
         f = float(self.spin_floor.value())
         c = float(self.spin_ceiling.value())

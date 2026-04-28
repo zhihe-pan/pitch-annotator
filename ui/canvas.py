@@ -543,9 +543,15 @@ class PitchCanvas(QWidget):
         """
         Update the pitch contour
         """
-        self._cached_timestamps = np.asarray(timestamps, dtype=float)
-        self._cached_pitch_values = np.asarray(pitch_values, dtype=float)
-        self.pitch_item.setData(x=timestamps, y=pitch_values)
+        ts = np.asarray(timestamps, dtype=float)
+        vals = np.asarray(pitch_values, dtype=float)
+        if len(ts) > 0 and len(vals) > 0:
+            mask = np.isfinite(ts) & np.isfinite(vals)
+            ts = ts[mask]
+            vals = vals[mask]
+        self._cached_timestamps = ts
+        self._cached_pitch_values = vals
+        self.pitch_item.setData(x=ts, y=vals)
         self._update_selected_point_visual()
         self._update_selected_region_visual()
 

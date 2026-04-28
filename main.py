@@ -5,6 +5,7 @@ import re
 import signal
 import sys
 import traceback
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -1199,6 +1200,10 @@ class Controller(QObject):
         if len(region_times) == 0:
             self.window.statusbar.showMessage("No frames found in selected region.", 3000)
             return
+        self.state.formant_times = np.array([])
+        self.state.f1_values = np.array([])
+        self.state.f2_values = np.array([])
+        self.state.f3_values = np.array([])
         self.state.set_voiced(region_start, region_end, region_values)
         self._refresh_formants_from_state()
         self.window.statusbar.showMessage(f"Selected region set to voiced. Voice%: {self.state.voice_percent:.1f}", 3000)
@@ -1206,6 +1211,10 @@ class Controller(QObject):
     def _handle_set_region_unvoiced(self):
         r_min, r_max = self.window.canvas.get_selected_region()
         self._push_undo_state()
+        self.state.formant_times = np.array([])
+        self.state.f1_values = np.array([])
+        self.state.f2_values = np.array([])
+        self.state.f3_values = np.array([])
         self.state.set_unvoiced(r_min, r_max)
         self._refresh_formants_from_state()
         self._mark_current_entry_dirty()
@@ -1214,6 +1223,10 @@ class Controller(QObject):
     def _handle_set_region_silence(self):
         r_min, r_max = self.window.canvas.get_selected_region()
         self._push_undo_state()
+        self.state.formant_times = np.array([])
+        self.state.f1_values = np.array([])
+        self.state.f2_values = np.array([])
+        self.state.f3_values = np.array([])
         self.state.set_silence(r_min, r_max)
         self._refresh_formants_from_state()
         self._mark_current_entry_dirty()
@@ -1887,6 +1900,7 @@ def main():
     signal.signal(signal.SIGINT, lambda s, f: QApplication.quit())
     signal.signal(signal.SIGTERM, lambda s, f: QApplication.quit())
 
+    warnings.filterwarnings("ignore", message="All-NaN slice encountered")
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     window = MainWindow()
