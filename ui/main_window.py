@@ -41,7 +41,16 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.close_handler = None
         self.setWindowTitle("Pitch Annotator")
-        self.resize(1700, 850)
+        self.setMinimumSize(900, 600)
+
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            geom = screen.availableGeometry()
+            w = min(int(geom.width() * 0.92), 1440)
+            h = min(int(geom.height() * 0.88), 850)
+        else:
+            w, h = 1400, 800
+        self.resize(w, h)
         
         # Apply simple dark theme
         self.setStyleSheet("""
@@ -79,19 +88,24 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         
         layout = QHBoxLayout(central_widget)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(0)
 
         sidebar = QWidget()
-        sidebar.setMinimumWidth(120)
+        sidebar.setMinimumWidth(160)
+        sidebar.setMaximumWidth(260)
         sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(0, 0, 0, 0)
-        sidebar_layout.setSpacing(8)
-        group_files = QGroupBox("Batch Audio Files")
+        sidebar_layout.setContentsMargins(0, 0, 6, 0)
+        sidebar_layout.setSpacing(6)
+
+        group_files = QGroupBox("Batch Files")
         files_layout = QVBoxLayout(group_files)
         self.audio_list = QListWidget()
         self.audio_list.currentRowChanged.connect(self.current_audio_index_changed.emit)
         files_layout.addWidget(self.audio_list)
-        self.lbl_batch_hint = QLabel("Import multiple audio files, then select one here or use Up/Down.")
+        self.lbl_batch_hint = QLabel("Up/Down to switch file")
         self.lbl_batch_hint.setWordWrap(True)
+        self.lbl_batch_hint.setToolTip("Import multiple audio files, then select one here or use Up/Down keys.")
         files_layout.addWidget(self.lbl_batch_hint)
 
         self.btn_clear_list = QPushButton("Clear File List")
@@ -105,32 +119,38 @@ class MainWindow(QMainWindow):
 
         right_splitter = QSplitter(Qt.Horizontal)
         right_splitter.setHandleWidth(4)
+        self.right_splitter = right_splitter
         right_splitter.addWidget(self.canvas)
         right_splitter.addWidget(self.control_panel)
-        right_splitter.setSizes([680, 380])
         right_splitter.setCollapsible(0, False)
         right_splitter.setCollapsible(1, False)
-        right_splitter.setStretchFactor(0, 3)
-        right_splitter.setStretchFactor(1, 2)
+        right_splitter.setStretchFactor(0, 4)
+        right_splitter.setStretchFactor(1, 1)
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.setHandleWidth(4)
-        splitter.addWidget(sidebar)
-        splitter.addWidget(right_splitter)
-        splitter.setSizes([350, 850])
-        splitter.setCollapsible(0, False)
-        splitter.setCollapsible(1, False)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        layout.addWidget(splitter)
-        for handle in splitter.findChildren(QSplitterHandle):
-            handle.setCursor(Qt.SplitHCursor)
-        for handle in right_splitter.findChildren(QSplitterHandle):
-            handle.setCursor(Qt.SplitHCursor)
+        sidebar_width = 190
+        control_width = 300
+        right_space = max(600, w - sidebar_width)
+        right_splitter.setSizes([max(500, right_space - control_width), control_width])
+
+        self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setHandleWidth(4)
+        self.splitter.addWidget(sidebar)
+        self.splitter.addWidget(right_splitter)
+        self.splitter.setSizes([sidebar_width, right_space])
+        self.splitter.setCollapsible(0, False)
+        self.splitter.setCollapsible(1, False)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        layout.addWidget(self.splitter)
         
         self._setup_menus()
         self._setup_statusbar()
         self._setup_shortcuts()
+
+        for handle in self.splitter.findChildren(QSplitterHandle):
+            handle.setCursor(Qt.SplitHCursor)
+        for handle in self.right_splitter.findChildren(QSplitterHandle):
+            handle.setCursor(Qt.SplitHCursor)
 
     def _setup_menus(self):
         menubar = self.menuBar()
@@ -172,16 +192,13 @@ class MainWindow(QMainWindow):
         self.statusbar = QStatusBar()
         self.setStatusBar(self.statusbar)
         self.lbl_current_file = QLabel("Current file: None")
-        self.lbl_current_file.setMinimumWidth(320)
-        self.lbl_stats = QLabel("F0 Stats: N/A")
-        self.lbl_voice = QLabel("Voice%: N/A")
-        self.lbl_pitch_source = QLabel("Pitch source: Unknown")
+        self.lbl_current_file.setMinimumWidth(220)
         self.lbl_duration = QLabel("Total: 0.000s | Selection: 0.000s")
+        self.lbl_voice = QLabel("Voice%: N/A")
+        self.lbl_voice.setToolTip("F0 Stats: N/A | Pitch source: Unknown")
         self.statusbar.addWidget(self.lbl_current_file, 1)
         self.statusbar.addWidget(self.lbl_duration)
-        self.statusbar.addPermanentWidget(self.lbl_stats)
         self.statusbar.addPermanentWidget(self.lbl_voice)
-        self.statusbar.addPermanentWidget(self.lbl_pitch_source)
 
     def _setup_shortcuts(self):
         self.shortcut_play_selection = QShortcut(QKeySequence(Qt.Key_Space), self)
@@ -203,13 +220,17 @@ class MainWindow(QMainWindow):
         p20_st = hz_to_semitone(float(p20))
         p50_st = hz_to_semitone(float(p50))
         p80_st = hz_to_semitone(float(p80))
-        self.lbl_stats.setText(
-            "F0 "
-            f"20%: {p20:.1f}Hz ({p20_st:.1f}st) | "
+        self._last_stats_text = (
+            f"F0 20%: {p20:.1f}Hz ({p20_st:.1f}st) | "
             f"50%: {p50:.1f}Hz ({p50_st:.1f}st) | "
             f"80%: {p80:.1f}Hz ({p80_st:.1f}st)"
         )
         self.lbl_voice.setText(f"Voice%: {voice_percent:.1f}")
+        source = getattr(self, "_last_pitch_source", "")
+        tip = self._last_stats_text
+        if source:
+            tip += f" | Pitch source: {source}"
+        self.lbl_voice.setToolTip(tip)
 
     def update_durations(self, total_duration, selection_duration):
         self.lbl_duration.setText(
@@ -217,7 +238,13 @@ class MainWindow(QMainWindow):
         )
 
     def update_pitch_source(self, source_text):
-        self.lbl_pitch_source.setText(f"Pitch source: {source_text}")
+        self._last_pitch_source = source_text
+        stats = getattr(self, "_last_stats_text", "")
+        tip = stats if stats else ""
+        if tip:
+            tip += " | "
+        tip += f"Pitch source: {source_text}"
+        self.lbl_voice.setToolTip(tip)
 
     def update_current_file(self, filepath):
         if not filepath:

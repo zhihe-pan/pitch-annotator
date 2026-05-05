@@ -1,6 +1,6 @@
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QWidget as QtWidget, QMenu, QGraphicsRectItem, QScrollBar
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QWidget as QtWidget, QMenu, QGraphicsRectItem, QScrollBar, QPushButton
 from PySide6.QtCore import Qt, Signal, QRectF
 from PySide6.QtGui import QCursor, QColor, QPen, QBrush
 
@@ -81,15 +81,15 @@ class PitchCanvas(QWidget):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(6)
+        self.layout.setSpacing(4)
 
         self.legend_widget = QtWidget()
         self.legend_widget.setStyleSheet(
             "background: #f4f1e8; border: 1px solid #c8c2b8; border-radius: 6px;"
         )
         self.legend_layout = QHBoxLayout(self.legend_widget)
-        self.legend_layout.setContentsMargins(10, 8, 10, 8)
-        self.legend_layout.setSpacing(12)
+        self.legend_layout.setContentsMargins(8, 6, 8, 6)
+        self.legend_layout.setSpacing(10)
         self.layout.addWidget(self.legend_widget)
 
         # Main pyqtgraph PlotWidget
@@ -182,6 +182,7 @@ class PitchCanvas(QWidget):
         self.region_shift_active = False
         self._cached_timestamps = np.array([])
         self._cached_pitch_values = np.array([])
+        self._cached_segment_labels = np.array([], dtype=int)
         self.segment_items = []
         self._segment_spans = []
         self.audio_end_time = 1.0
@@ -230,7 +231,17 @@ class PitchCanvas(QWidget):
             line.setPen(pg.mkPen('#1f5cff', width=2))
 
     def _build_segment_legend(self):
-        title = QLabel("Segment colors:")
+        self.btn_toggle_legend = QPushButton("\u25bc")  # ▼
+        self.btn_toggle_legend.setFixedSize(18, 18)
+        self.btn_toggle_legend.setToolTip("Toggle legend visibility")
+        self.btn_toggle_legend.setStyleSheet(
+            "QPushButton { background: #e8e4d8; border: 1px solid #c8c2b8; border-radius: 3px; color: #111; }"
+            "QPushButton:hover { background: #d4cfc3; }"
+        )
+        self.btn_toggle_legend.clicked.connect(self._on_toggle_legend)
+        self.legend_layout.addWidget(self.btn_toggle_legend)
+
+        title = QLabel("Segments:")
         title.setStyleSheet("color: #111111; font-weight: 700; background: transparent;")
         self.legend_layout.addWidget(title)
         items = [
@@ -297,6 +308,16 @@ class PitchCanvas(QWidget):
             self.legend_layout.addWidget(dot)
             self.legend_layout.addWidget(label)
         self.legend_layout.addStretch()
+
+    def _on_toggle_legend(self):
+        layout = self.legend_layout
+        self._legend_collapsed = getattr(self, "_legend_collapsed", False)
+        self._legend_collapsed = not self._legend_collapsed
+        for i in range(1, layout.count()):
+            item = layout.itemAt(i)
+            if item.widget():
+                item.widget().setVisible(not self._legend_collapsed)
+        self.btn_toggle_legend.setText("\u25b6" if self._legend_collapsed else "\u25bc")  # ▶/▼
 
     def show_region(self, show=True):
         if show:
@@ -490,6 +511,7 @@ class PitchCanvas(QWidget):
         self.segment_items.clear()
         self._segment_spans = []
 
+        self._cached_segment_labels = np.asarray(segment_labels, dtype=int)
         if len(timestamps) == 0 or len(segment_labels) == 0:
             return
 
@@ -545,27 +567,39 @@ class PitchCanvas(QWidget):
         """
         ts = np.asarray(timestamps, dtype=float)
         vals = np.asarray(pitch_values, dtype=float)
-        if len(ts) > 0 and len(vals) > 0:
-            mask = np.isfinite(ts) & np.isfinite(vals)
-            ts = ts[mask]
-            vals = vals[mask]
         self._cached_timestamps = ts
         self._cached_pitch_values = vals
         self.pitch_item.setData(x=ts, y=vals)
         self._update_selected_point_visual()
         self._update_selected_region_visual()
 
-    def update_formants(self, formant_times, f1_values, f2_values, f3_values):
+    def update_formants(
+        self,
+        formant_times,
+        f1_values,
+        f2_values,
+        f3_values,
+        pitch_times=None,
+        pitch_values=None,
+        segment_labels=None,
+    ):
         formant_times = np.asarray(formant_times, dtype=float)
         f1_values = np.asarray(f1_values, dtype=float)
         f2_values = np.asarray(f2_values, dtype=float)
         f3_values = np.asarray(f3_values, dtype=float)
+        voiced_mask = self._formant_voiced_mask(
+            formant_times,
+            pitch_times,
+            pitch_values,
+            segment_labels,
+        )
 
         def finite_xy(times, values):
             if len(times) == 0 or len(values) == 0:
                 return np.array([]), np.array([])
-            mask = np.isfinite(times) & np.isfinite(values)
-            return times[mask], values[mask]
+            count = min(len(times), len(values), len(voiced_mask))
+            mask = np.isfinite(times[:count]) & np.isfinite(values[:count]) & voiced_mask[:count]
+            return times[:count][mask], values[:count][mask]
 
         x1, y1 = finite_xy(formant_times, f1_values)
         x2, y2 = finite_xy(formant_times, f2_values)
@@ -573,6 +607,40 @@ class PitchCanvas(QWidget):
         self.f1_item.setData(x=x1, y=y1)
         self.f2_item.setData(x=x2, y=y2)
         self.f3_item.setData(x=x3, y=y3)
+
+    def _formant_voiced_mask(self, formant_times, pitch_times=None, pitch_values=None, segment_labels=None):
+        if len(formant_times) == 0:
+            return np.array([], dtype=bool)
+        pitch_times = self._cached_timestamps if pitch_times is None else np.asarray(pitch_times, dtype=float)
+        pitch_values = self._cached_pitch_values if pitch_values is None else np.asarray(pitch_values, dtype=float)
+        if segment_labels is None:
+            segment_labels = self._cached_segment_labels
+        else:
+            segment_labels = np.asarray(segment_labels, dtype=int)
+
+        if len(pitch_times) == 0 or len(pitch_values) == 0:
+            return np.ones(len(formant_times), dtype=bool)
+
+        count = min(len(pitch_times), len(pitch_values))
+        pitch_times = pitch_times[:count]
+        pitch_values = pitch_values[:count]
+        if len(segment_labels) == count:
+            voiced_pitch_mask = (
+                (segment_labels[:count] == 2)
+                & np.isfinite(pitch_values)
+                & (pitch_values > 0)
+            )
+        else:
+            voiced_pitch_mask = np.isfinite(pitch_values) & (pitch_values > 0)
+
+        indices = np.searchsorted(pitch_times, formant_times, side="left")
+        right_indices = np.clip(indices, 0, count - 1)
+        left_indices = np.clip(indices - 1, 0, count - 1)
+        use_left = np.abs(formant_times - pitch_times[left_indices]) <= np.abs(pitch_times[right_indices] - formant_times)
+        nearest_indices = np.where(use_left, left_indices, right_indices)
+        mask = voiced_pitch_mask[nearest_indices]
+        mask &= np.isfinite(formant_times)
+        return mask
 
     def update_quantile_lines(self, p20, p50, p80):
         for key, value in (("p20", p20), ("p50", p50), ("p80", p80)):

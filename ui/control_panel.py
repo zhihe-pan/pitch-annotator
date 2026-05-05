@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
                                QLabel, QSpinBox, QDoubleSpinBox, QSlider, QComboBox,
-                               QPushButton, QGroupBox, QFormLayout)
+                               QPushButton, QGroupBox, QFormLayout, QScrollArea, QSizePolicy)
 from PySide6.QtCore import Signal, Qt
 
 class ControlPanel(QWidget):
@@ -14,21 +14,37 @@ class ControlPanel(QWidget):
     apply_params_to_all_requested = Signal()
     volume_changed = Signal(int)
     audio_output_device_changed = Signal(int)
+    refresh_audio_output_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumWidth(280)
-        self.setMaximumWidth(700)
+        self.setMinimumWidth(270)
+        self.setMaximumWidth(320)
 
-        main_layout = QVBoxLayout(self)
-        main_layout.setSpacing(6)
-        main_layout.setContentsMargins(4, 4, 4, 4)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        scroll_content = QWidget()
+        main_layout = QVBoxLayout(scroll_content)
+        main_layout.setSpacing(8)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+
+        def configure_button(button):
+            button.setMinimumHeight(30)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            return button
 
         # Audio Parameters Group
         group_params = QGroupBox("Pitch Parameters")
         form_layout = QFormLayout()
-        form_layout.setSpacing(4)
-        form_layout.setContentsMargins(6, 8, 6, 6)
+        form_layout.setSpacing(6)
+        form_layout.setContentsMargins(8, 10, 8, 8)
+        form_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
 
         self.lbl_pitch_method = QLabel("Pitch method: Filtered AC")
         form_layout.addRow(self.lbl_pitch_method)
@@ -96,12 +112,10 @@ class ControlPanel(QWidget):
         form_layout.addRow("Octave Jump Cost:", self.spin_octave_jump_cost)
         form_layout.addRow("Voiced/Unvoiced Cost:", self.spin_voiced_unvoiced_cost)
 
-        btn_recompute = QPushButton("Recompute")
-        btn_recompute.setMinimumHeight(28)
+        btn_recompute = configure_button(QPushButton("Recompute"))
         form_layout.addRow(btn_recompute)
 
-        self.btn_apply_all = QPushButton("Apply to All Files")
-        self.btn_apply_all.setMinimumHeight(28)
+        self.btn_apply_all = configure_button(QPushButton("Apply to All Files"))
         self.btn_apply_all.setToolTip(
             "Copy the current pitch parameters to every imported audio file. "
             "This updates their defaults, but you should still review each file manually."
@@ -113,21 +127,23 @@ class ControlPanel(QWidget):
         # Editing Tools Group
         group_tools = QGroupBox("Manual Editing Tools")
         vbox_tools = QVBoxLayout()
-        vbox_tools.setSpacing(3)
+        vbox_tools.setSpacing(6)
+        vbox_tools.setContentsMargins(8, 10, 8, 8)
 
-        self.btn_toggle_region = QPushButton("Show Region Box")
+        self.btn_toggle_region = configure_button(QPushButton("Show Region Box"))
         self.btn_toggle_region.setCheckable(True)
 
-        btn_set_voiced = QPushButton("Set Region to Voiced")
-        btn_set_unvoiced = QPushButton("Set Region to Unvoiced")
-        btn_set_silence = QPushButton("Set Region to Silence")
+        btn_set_voiced = configure_button(QPushButton("Set Region to Voiced"))
+        btn_set_unvoiced = configure_button(QPushButton("Set Region to Unvoiced"))
+        btn_set_silence = configure_button(QPushButton("Set Region to Silence"))
 
         instr = QLabel(
             "Alt+Click: Add Point\n"
-            "Shift+Click: Remove Point\n"
+            "Alt+Shift+Click: Remove Point\n"
             "Space: Play Region\n"
             "Shift+Space: Play Pitch Track"
         )
+        instr.setWordWrap(True)
         vbox_tools.addWidget(instr)
         vbox_tools.addWidget(self.btn_toggle_region)
         vbox_tools.addWidget(btn_set_voiced)
@@ -137,6 +153,9 @@ class ControlPanel(QWidget):
 
         group_playback = QGroupBox("Playback")
         playback_layout = QFormLayout()
+        playback_layout.setSpacing(6)
+        playback_layout.setContentsMargins(8, 10, 8, 8)
+        playback_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self.combo_audio_output = QComboBox()
         playback_layout.addRow("Output:", self.combo_audio_output)
         self.slider_volume = QSlider(Qt.Horizontal)
@@ -144,15 +163,22 @@ class ControlPanel(QWidget):
         self.slider_volume.setValue(100)
         self.lbl_volume_value = QLabel("100%")
         volume_row = QHBoxLayout()
+        volume_row.setContentsMargins(0, 0, 0, 0)
         volume_row.addWidget(self.slider_volume)
         volume_row.addWidget(self.lbl_volume_value)
         playback_layout.addRow("Volume:", volume_row)
+        self.btn_refresh_devices = configure_button(QPushButton("Refresh Devices"))
+        self.btn_refresh_devices.setToolTip("Rescan audio output devices (e.g. after plugging in headphones)")
+        playback_layout.addRow(self.btn_refresh_devices)
         group_playback.setLayout(playback_layout)
 
         main_layout.addWidget(group_params)
         main_layout.addWidget(group_tools)
         main_layout.addWidget(group_playback)
         main_layout.addStretch()
+
+        scroll.setWidget(scroll_content)
+        outer_layout.addWidget(scroll)
 
         btn_recompute.clicked.connect(self._on_recompute)
         self.btn_apply_all.clicked.connect(self.apply_params_to_all_requested.emit)
@@ -162,6 +188,7 @@ class ControlPanel(QWidget):
         btn_set_silence.clicked.connect(self.set_region_silence.emit)
         self.slider_volume.valueChanged.connect(self._on_volume_changed)
         self.combo_audio_output.currentIndexChanged.connect(self.audio_output_device_changed.emit)
+        self.btn_refresh_devices.clicked.connect(self.refresh_audio_output_requested.emit)
 
     def _on_recompute(self):
         f = float(self.spin_floor.value())

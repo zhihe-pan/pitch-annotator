@@ -762,6 +762,7 @@ class Controller(QObject):
         self.window.control_panel.set_region_silence.connect(self._handle_set_region_silence)
         self.window.control_panel.volume_changed.connect(self._handle_volume_changed)
         self.window.control_panel.audio_output_device_changed.connect(self._handle_audio_output_device_changed)
+        self.window.control_panel.refresh_audio_output_requested.connect(self._refresh_audio_output_devices)
         self.window.close_handler = self._confirm_close
 
         self.worker.finished_loading.connect(self._on_loading_finished, Qt.QueuedConnection)
@@ -1091,6 +1092,9 @@ class Controller(QObject):
             self.state.f1_values,
             self.state.f2_values,
             self.state.f3_values,
+            self.state.timestamps,
+            self.state.pitch_values,
+            self.state.segment_labels,
         )
         p20, p50, p80 = self.state.get_quantiles()
         self.window.update_stats(p20, p50, p80, self.state.voice_percent)
@@ -1119,20 +1123,17 @@ class Controller(QObject):
         if entry_index != self.current_entry_index or self.state.audio_path != filepath:
             return
         self.state.add_or_update_point(time_val, snapped_freq)
-        self._refresh_formants_from_state()
         self._mark_current_entry_dirty()
 
     def _handle_remove_point(self, time_val):
         self._push_undo_state()
         self.state.remove_point(time_val)
-        self._refresh_formants_from_state()
         self._mark_current_entry_dirty()
 
     def _handle_modify_point(self, time_val, freq_val):
         if self.state.audio_path is None:
             return
         self.state.add_or_update_point(time_val, freq_val)
-        self._refresh_formants_from_state()
         self._mark_current_entry_dirty()
 
     def _handle_point_drag_started(self):
@@ -1171,7 +1172,10 @@ class Controller(QObject):
         self._region_shift_context = None
 
     def _handle_set_region_voiced(self):
-        r_min, r_max = self.window.canvas.get_selected_region()
+        selected_region = self._get_visible_selected_region()
+        if selected_region is None:
+            return
+        r_min, r_max = selected_region
         if len(self.state.timestamps) == 0:
             return
         self._push_undo_state()
@@ -1200,37 +1204,38 @@ class Controller(QObject):
         if len(region_times) == 0:
             self.window.statusbar.showMessage("No frames found in selected region.", 3000)
             return
-        self.state.formant_times = np.array([])
-        self.state.f1_values = np.array([])
-        self.state.f2_values = np.array([])
-        self.state.f3_values = np.array([])
         self.state.set_voiced(region_start, region_end, region_values)
-        self._refresh_formants_from_state()
         self.window.statusbar.showMessage(f"Selected region set to voiced. Voice%: {self.state.voice_percent:.1f}", 3000)
 
     def _handle_set_region_unvoiced(self):
-        r_min, r_max = self.window.canvas.get_selected_region()
+        selected_region = self._get_visible_selected_region()
+        if selected_region is None:
+            return
+        r_min, r_max = selected_region
         self._push_undo_state()
-        self.state.formant_times = np.array([])
-        self.state.f1_values = np.array([])
-        self.state.f2_values = np.array([])
-        self.state.f3_values = np.array([])
         self.state.set_unvoiced(r_min, r_max)
-        self._refresh_formants_from_state()
         self._mark_current_entry_dirty()
         self.window.statusbar.showMessage(f"Selected region set to unvoiced. Voice%: {self.state.voice_percent:.1f}", 3000)
 
     def _handle_set_region_silence(self):
-        r_min, r_max = self.window.canvas.get_selected_region()
+        selected_region = self._get_visible_selected_region()
+        if selected_region is None:
+            return
+        r_min, r_max = selected_region
         self._push_undo_state()
-        self.state.formant_times = np.array([])
-        self.state.f1_values = np.array([])
-        self.state.f2_values = np.array([])
-        self.state.f3_values = np.array([])
         self.state.set_silence(r_min, r_max)
-        self._refresh_formants_from_state()
         self._mark_current_entry_dirty()
         self.window.statusbar.showMessage(f"Selected region set to silence. Voice%: {self.state.voice_percent:.1f}", 3000)
+
+    def _get_visible_selected_region(self):
+        if not self.window.canvas.region_item.isVisible():
+            self.window.statusbar.showMessage("Show or drag a region before using region editing tools.", 3000)
+            return None
+        r_min, r_max = self.window.canvas.get_selected_region()
+        if abs(float(r_max) - float(r_min)) < 1e-4:
+            self.window.statusbar.showMessage("Selected region is too small.", 3000)
+            return None
+        return float(r_min), float(r_max)
 
     def _handle_selection_changed(self, start_time, end_time):
         total_duration = float(self.state.audio_data.shape[0] / self.state.sample_rate) if self.state.audio_data is not None and self.state.sample_rate else 0.0
@@ -1260,7 +1265,6 @@ class Controller(QObject):
             return
         snapshot = self._undo_stack.pop()
         self.state.restore_edit_state(snapshot)
-        self._refresh_formants_from_state()
         self._drag_edit_active = False
         self._mark_current_entry_dirty()
         self.window.statusbar.showMessage("Undid last edit.", 2000)
@@ -1606,6 +1610,10 @@ class Controller(QObject):
             self._audio_sink.setVolume(self._playback_volume)
 
     def _refresh_audio_output_devices(self):
+        prev_device_id = b""
+        if self._audio_output_devices and 0 <= self._selected_audio_output_index < len(self._audio_output_devices):
+            prev_device_id = bytes(self._audio_output_devices[self._selected_audio_output_index].id()) if hasattr(self._audio_output_devices[self._selected_audio_output_index], "id") else b""
+
         self._audio_output_devices = list(QMediaDevices.audioOutputs())
         default_device = QMediaDevices.defaultAudioOutput()
         default_id = bytes(default_device.id()) if hasattr(default_device, "id") else b""
@@ -1614,7 +1622,9 @@ class Controller(QObject):
         for idx, device in enumerate(self._audio_output_devices):
             device_names.append(device.description())
             device_id = bytes(device.id()) if hasattr(device, "id") else b""
-            if default_id and device_id == default_id:
+            if prev_device_id and device_id == prev_device_id:
+                selected_index = idx
+            elif default_id and device_id == default_id:
                 selected_index = idx
         if not device_names:
             device_names = ["System Default"]
@@ -1624,6 +1634,7 @@ class Controller(QObject):
             if self._selected_audio_output_index == 0:
                 self._selected_audio_output_index = selected_index
         self.window.control_panel.set_audio_output_devices(device_names, self._selected_audio_output_index)
+        self.window.statusbar.showMessage(f"Audio output devices refreshed ({len(device_names)} found)", 3000)
 
     def _handle_audio_output_device_changed(self, index):
         if not self._audio_output_devices:
