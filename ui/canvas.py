@@ -73,6 +73,7 @@ class PitchCanvas(QWidget):
     region_shift_requested = Signal(float)
     region_shift_finished = Signal()
     selection_changed = Signal(float, float)
+    selected_point_changed = Signal(object, object)
     
     set_region_voiced_requested = Signal(float, float) # start_time, end_time
     set_region_unvoiced_requested = Signal(float, float) # start_time, end_time
@@ -379,15 +380,26 @@ class PitchCanvas(QWidget):
     def _update_selected_point_visual(self):
         if self.selected_point_index is None or len(self._cached_timestamps) == 0:
             self.selected_point_item.setData([], [])
+            self.selected_point_changed.emit(None, None)
             return
         idx = int(self.selected_point_index)
         if idx < 0 or idx >= len(self._cached_timestamps) or np.isnan(self._cached_pitch_values[idx]):
             self.selected_point_item.setData([], [])
+            self.selected_point_changed.emit(None, None)
             return
+        time_value = float(self._cached_timestamps[idx])
+        pitch_value = float(self._cached_pitch_values[idx])
         self.selected_point_item.setData(
-            [float(self._cached_timestamps[idx])],
-            [float(self._cached_pitch_values[idx])],
+            [time_value],
+            [pitch_value],
         )
+        self.selected_point_changed.emit(time_value, pitch_value)
+
+    def clear_selected_point(self):
+        self.selected_point_index = None
+        self.dragging_point_index = None
+        self.dragging_point_time = None
+        self._update_selected_point_visual()
 
     def _get_selected_region_indices(self):
         if not self.region_item.isVisible() or len(self._cached_timestamps) == 0:

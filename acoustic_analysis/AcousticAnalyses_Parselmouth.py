@@ -179,6 +179,41 @@ def build_interval_mask(times, intervals):
     return mask
 
 
+def estimate_frame_half_width(times):
+    times = np.asarray(times, dtype=float)
+    if len(times) > 1:
+        return max(float(np.median(np.diff(times))) / 2.0, 1e-4)
+    return 0.005
+
+
+def compute_mask_duration(times, mask):
+    times = np.asarray(times, dtype=float)
+    mask = np.asarray(mask, dtype=bool)
+    if len(times) == 0 or len(mask) == 0 or len(times) != len(mask) or not np.any(mask):
+        return 0.0
+
+    half_width = estimate_frame_half_width(times)
+    duration = 0.0
+    start_idx = None
+    for idx, is_active in enumerate(mask):
+        if is_active and start_idx is None:
+            start_idx = idx
+        elif (not is_active) and start_idx is not None:
+            start = max(0.0, float(times[start_idx] - half_width))
+            end = float(times[idx - 1] + half_width)
+            if end > start:
+                duration += end - start
+            start_idx = None
+
+    if start_idx is not None:
+        start = max(0.0, float(times[start_idx] - half_width))
+        end = float(times[-1] + half_width)
+        if end > start:
+            duration += end - start
+
+    return float(duration)
+
+
 def collect_segmented_peaks(times, values, intervals, distance_frames, prominence):
     count = 0
     for st, en in intervals:
@@ -301,7 +336,7 @@ def extract_acoustic_features(filepath):
 
     # 防护：如果剔除静音后什么都没剩下，或者音频太短
     if snd is None or active_duration < 0.05:
-        return {'FileName': os.path.basename(filepath)}
+        return {'FileName': os.path.basename(filepath), 'Voiced_duration_s': 0.0}
 
     # 此时的 duration 是真正的“有效发声总时长”，不受头尾静音干扰！
     duration = active_duration
@@ -327,6 +362,7 @@ def extract_acoustic_features(filepath):
     voiced_indices = (~np.isnan(pitch_values)) & (pitch_values > 0)
     nz_pitch = pitch_values[~np.isnan(pitch_values)]
     voiced_percent = np.mean(voiced_indices) if len(pitch_values) > 0 else 0
+    voiced_duration = compute_mask_duration(pitch_times, voiced_indices)
 
     # 计算 VoicedSegmentsPerSec，仅在每个活动段内部计数，避免拼接制造假连续
     voiced_segments_count = 0
@@ -539,6 +575,7 @@ def extract_acoustic_features(filepath):
         'voice_type': metadata["voice_type"],
         'type': metadata["type"],
         'Voiced_percent': voiced_percent,
+        'Voiced_duration_s': voiced_duration,
         'loudnessPeaksPerSec': loudness_peaks_per_sec,
         'VoicedSegmentsPerSec': voiced_seg_per_sec,
         

@@ -3,7 +3,9 @@ import math
 import os
 import re
 import signal
+import subprocess
 import sys
+import tempfile
 import traceback
 import warnings
 from dataclasses import dataclass, field
@@ -11,9 +13,8 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot, QStandardPaths, QByteArray, QBuffer, QIODevice, QUrl
+from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot, QStandardPaths, QUrl
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPen, qRgb
-from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QDialog
 
 from backend.acoustic_features import (
@@ -31,6 +32,7 @@ from ui.main_window import MainWindow
 class BatchAudioEntry:
     filepath: str
     params: dict
+    imported_pitch: dict | None = None
     state_snapshot: dict | None = None
     spectrogram_cache: dict | None = None
     view_range_x: tuple[float, float] | None = None
@@ -44,6 +46,7 @@ class BatchAudioEntry:
 class ComputeWorker(QObject):
     finished_loading = Signal(int, str, object, object, object, object, int)
     finished_pitch = Signal(int, str, object, object, object, object, object, object, object, str)
+    finished_formants = Signal(int, str, object, object, object, object)
     finished_snap = Signal(int, str, float, float)
     finished_region_voiced = Signal(int, str, float, float, object, object)
     error_occurred = Signal(str)
@@ -108,6 +111,27 @@ class ComputeWorker(QObject):
                 f2_values,
                 f3_values,
                 str(pitch_source),
+            )
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+
+    @Slot(int, str, object, object, object)
+    def compute_formants(self, entry_index, filepath, timestamps, pitch_values, segment_labels):
+        try:
+            if self.processor.loaded_filepath != str(filepath):
+                self.processor.load_audio(filepath)
+            formant_times, f1_values, f2_values, f3_values = self.processor.extract_formants_for_track(
+                timestamps,
+                pitch_values,
+                segment_labels,
+            )
+            self.finished_formants.emit(
+                int(entry_index),
+                str(filepath),
+                formant_times,
+                f1_values,
+                f2_values,
+                f3_values,
             )
         except Exception as e:
             self.error_occurred.emit(str(e))
@@ -684,6 +708,7 @@ class ExportWorker(QObject):
 class Controller(QObject):
     request_load = Signal(int, str)
     request_compute = Signal(int, str, float, float, float, float, float, float, float, float, float)
+    request_formants = Signal(int, str, object, object, object)
     request_snap = Signal(int, str, float, float)
     request_estimate_voiced_region = Signal(int, str, float, float, object, float, float, float, float, float, float, float, float, float)
     request_export = Signal(object)
@@ -698,14 +723,13 @@ class Controller(QObject):
         self._loading_entry_index = -1
         self._undo_stack = []
         self._drag_edit_active = False
+        self._point_drag_modified = False
         self._region_shift_context = None
         self._cleaned_up = False
         self._suppress_dirty_tracking = False
-        self._audio_sink = None
-        self._audio_buffer = None
+        self._playback_process = None
+        self._playback_temp_path = None
         self._playback_volume = 1.0
-        self._audio_output_devices = []
-        self._selected_audio_output_index = 0
         self._pending_export_task = None
 
         self.thread = QThread()
@@ -716,6 +740,7 @@ class Controller(QObject):
 
         self.request_load.connect(self.worker.load_audio, Qt.QueuedConnection)
         self.request_compute.connect(self.worker.compute_pitch, Qt.QueuedConnection)
+        self.request_formants.connect(self.worker.compute_formants, Qt.QueuedConnection)
         self.request_snap.connect(self.worker.snap_point, Qt.QueuedConnection)
         self.request_estimate_voiced_region.connect(self.worker.estimate_voiced_region, Qt.QueuedConnection)
 
@@ -727,6 +752,7 @@ class Controller(QObject):
         self.request_export.connect(self.export_worker.run_task, Qt.QueuedConnection)
 
         self.window.open_audio_requested.connect(self._handle_open_audio)
+        self.window.import_pitch_csv_requested.connect(self._handle_import_pitch_csvs)
         self.window.current_audio_index_changed.connect(self._handle_audio_index_changed)
         self.window.next_audio_requested.connect(self._handle_next_audio)
         self.window.previous_audio_requested.connect(self._handle_previous_audio)
@@ -743,6 +769,9 @@ class Controller(QObject):
         self.window.play_selection_requested.connect(self._handle_play_selection)
         self.window.play_pitch_track_requested.connect(self._handle_play_pitch_track)
         self.window.undo_requested.connect(self._handle_undo)
+        self.window.set_region_voiced_requested.connect(self._handle_set_region_voiced)
+        self.window.set_region_unvoiced_requested.connect(self._handle_set_region_unvoiced)
+        self.window.set_region_silence_requested.connect(self._handle_set_region_silence)
 
         self.window.canvas.add_point_requested.connect(self._handle_add_point)
         self.window.canvas.remove_point_requested.connect(self._handle_remove_point)
@@ -753,10 +782,10 @@ class Controller(QObject):
         self.window.canvas.region_shift_requested.connect(self._handle_region_shift_requested)
         self.window.canvas.region_shift_finished.connect(self._handle_region_shift_finished)
         self.window.canvas.selection_changed.connect(self._handle_selection_changed)
+        self.window.canvas.selected_point_changed.connect(self.window.update_selected_pitch_point)
 
         self.window.control_panel.recompute_requested.connect(self._handle_recompute)
         self.window.control_panel.apply_params_to_all_requested.connect(self._handle_apply_params_to_all)
-        self.window.control_panel.region_toggled.connect(self._handle_region_toggled)
         self.window.control_panel.set_region_voiced.connect(self._handle_set_region_voiced)
         self.window.control_panel.set_region_unvoiced.connect(self._handle_set_region_unvoiced)
         self.window.control_panel.set_region_silence.connect(self._handle_set_region_silence)
@@ -767,6 +796,7 @@ class Controller(QObject):
 
         self.worker.finished_loading.connect(self._on_loading_finished, Qt.QueuedConnection)
         self.worker.finished_pitch.connect(self._on_pitch_finished, Qt.QueuedConnection)
+        self.worker.finished_formants.connect(self._on_formants_finished, Qt.QueuedConnection)
         self.worker.finished_snap.connect(self._on_snap_finished, Qt.QueuedConnection)
         self.worker.finished_region_voiced.connect(self._on_region_voiced_estimated, Qt.QueuedConnection)
         self.worker.error_occurred.connect(self._on_error, Qt.QueuedConnection)
@@ -810,6 +840,235 @@ class Controller(QObject):
         self.window.set_audio_files([entry.filepath for entry in self.batch_entries])
         self.window.set_current_audio_index(first_new_index)
         self._switch_to_entry(first_new_index)
+
+    def _handle_import_pitch_csvs(self):
+        csv_paths = self._choose_pitch_csv_files()
+        if not csv_paths:
+            return
+
+        self._save_current_entry_state()
+        audio_index = self._build_audio_file_index()
+        existing_paths = {str(Path(entry.filepath).resolve()): index for index, entry in enumerate(self.batch_entries)}
+        imported_entries = []
+        updated_indices = []
+        skipped = []
+
+        for csv_path in csv_paths:
+            try:
+                payload = self._read_pitch_csv(csv_path)
+                audio_path = self._resolve_audio_for_pitch_csv(payload, csv_path, audio_index)
+            except Exception as exc:
+                skipped.append(f"{Path(csv_path).name}: {exc}")
+                continue
+
+            resolved_key = str(Path(audio_path).resolve())
+            if resolved_key in existing_paths:
+                existing_index = existing_paths[resolved_key]
+                if existing_index >= len(self.batch_entries):
+                    entry = imported_entries[existing_index - len(self.batch_entries)]
+                    entry.params = dict(payload["params"])
+                    entry.imported_pitch = payload
+                    entry.state_snapshot = None
+                    continue
+                entry = self.batch_entries[existing_index]
+                entry.params = dict(payload["params"])
+                entry.imported_pitch = payload
+                entry.state_snapshot = None
+                entry.acoustic_row = None
+                entry.dirty = False
+                self.window.update_audio_file_entry(existing_index, entry.filepath, False)
+                updated_indices.append(existing_index)
+                continue
+
+            existing_paths[resolved_key] = len(self.batch_entries) + len(imported_entries)
+            imported_entries.append(
+                BatchAudioEntry(
+                    filepath=str(audio_path),
+                    params=dict(payload["params"]),
+                    imported_pitch=payload,
+                )
+            )
+
+        if not imported_entries and not updated_indices:
+            QMessageBox.warning(
+                self.window,
+                "Import Pitch CSVs",
+                "No pitch CSVs could be matched to audio files.\n\n" + "\n".join(skipped[:12]),
+            )
+            return
+
+        first_new_index = len(self.batch_entries) if imported_entries else updated_indices[0]
+        self.batch_entries.extend(imported_entries)
+        self.window.set_audio_files([entry.filepath for entry in self.batch_entries])
+
+        if skipped:
+            QMessageBox.warning(
+                self.window,
+                "Some Pitch CSVs Were Skipped",
+                f"Imported {len(imported_entries) + len(updated_indices)} pitch CSV(s).\n\n"
+                f"Skipped {len(skipped)} file(s):\n" + "\n".join(skipped[:12]),
+            )
+
+        self.window.set_current_audio_index(first_new_index)
+        self._switch_to_entry(first_new_index)
+
+    def _choose_pitch_csv_files(self):
+        root_dir = Path(__file__).resolve().parent
+        start_dir = str(root_dir / "output" / "pitch_csv")
+        if not Path(start_dir).exists():
+            start_dir = str(root_dir)
+        dialog = QFileDialog(self.window, "Import Pitch CSVs", start_dir)
+        dialog.setFileMode(QFileDialog.ExistingFiles)
+        dialog.setAcceptMode(QFileDialog.AcceptOpen)
+        self._configure_file_dialog(dialog, start_dir)
+        dialog.setNameFilters(["Pitch CSV Files (*.csv)", "All Files (*)"])
+        if dialog.exec() != QFileDialog.Accepted:
+            return []
+        return dialog.selectedFiles()
+
+    def _read_pitch_csv(self, csv_path):
+        path = Path(csv_path)
+        with path.open("r", newline="", encoding="utf-8-sig") as handle:
+            reader = csv.DictReader(handle)
+            fieldnames = set(reader.fieldnames or [])
+            required = {"Time (s)", "Frequency (Hz)"}
+            missing = sorted(required - fieldnames)
+            if missing:
+                raise ValueError(f"missing column(s): {', '.join(missing)}")
+
+            rows = list(reader)
+
+        if not rows:
+            raise ValueError("empty CSV")
+
+        params = self._praat_default_params()
+        first_row = rows[0]
+        for name in PARAMETER_COLUMNS:
+            value = first_row.get(name, "")
+            if value not in (None, ""):
+                try:
+                    params[name] = float(value)
+                except ValueError:
+                    pass
+
+        timestamps = []
+        pitch_values = []
+        segment_labels = []
+        for row in rows:
+            try:
+                time_value = float(row["Time (s)"])
+                freq_value = float(row["Frequency (Hz)"])
+            except (TypeError, ValueError) as exc:
+                raise ValueError("contains non-numeric time or frequency values") from exc
+
+            timestamps.append(time_value)
+            pitch_values.append(freq_value if np.isfinite(freq_value) and freq_value > 0 else np.nan)
+
+            label_value = row.get("SegmentLabel", "")
+            try:
+                segment_label = int(float(label_value))
+            except (TypeError, ValueError):
+                segment_label = 2 if np.isfinite(freq_value) and freq_value > 0 else 1
+            if segment_label not in (0, 1, 2):
+                segment_label = 2 if np.isfinite(freq_value) and freq_value > 0 else 1
+            segment_labels.append(segment_label)
+
+        return {
+            "csv_path": str(path),
+            "audio_file": first_row.get("audio_file", ""),
+            "params": params,
+            "timestamps": np.asarray(timestamps, dtype=float),
+            "pitch_values": np.asarray(pitch_values, dtype=float),
+            "segment_labels": np.asarray(segment_labels, dtype=int),
+        }
+
+    def _build_audio_file_index(self):
+        audio_extensions = {".wav", ".mp3", ".m4a", ".flac", ".aiff", ".aif", ".ogg"}
+        root_dir = Path(__file__).resolve().parent
+        search_roots = [root_dir / "voicesample", root_dir / "VoiceSample"]
+        for entry in self.batch_entries:
+            try:
+                search_roots.append(Path(entry.filepath).resolve().parent)
+            except Exception:
+                pass
+
+        paths = []
+        seen = set()
+        for root in search_roots:
+            if not root.exists():
+                continue
+            for path in root.rglob("*"):
+                if not path.is_file() or path.suffix.lower() not in audio_extensions:
+                    continue
+                resolved = str(path.resolve())
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                paths.append(path.resolve())
+
+        by_name = {}
+        by_stem = {}
+        for path in paths:
+            by_name.setdefault(path.name.lower(), []).append(path)
+            by_stem.setdefault(path.stem.lower(), []).append(path)
+        return {"by_name": by_name, "by_stem": by_stem}
+
+    def _resolve_audio_for_pitch_csv(self, payload, csv_path, audio_index):
+        recorded_audio = str(payload.get("audio_file") or "").strip()
+        if recorded_audio:
+            direct_path = Path(recorded_audio).expanduser()
+            if direct_path.exists():
+                return direct_path.resolve()
+
+        recorded_name = self._basename_from_any_path(recorded_audio)
+        parent_hint = self._parent_hint_from_any_path(recorded_audio)
+        if recorded_name:
+            matched = self._pick_audio_candidate(
+                audio_index["by_name"].get(recorded_name.lower(), []),
+                parent_hint,
+            )
+            if matched is not None:
+                return matched
+
+        csv_stem = Path(csv_path).stem
+        if csv_stem.lower().endswith("_pitch"):
+            csv_stem = csv_stem[:-6]
+        matched = self._pick_audio_candidate(
+            audio_index["by_stem"].get(csv_stem.lower(), []),
+            parent_hint,
+        )
+        if matched is not None:
+            return matched
+
+        raise ValueError("no matching audio file found in voicesample")
+
+    @staticmethod
+    def _basename_from_any_path(path_value):
+        if not path_value:
+            return ""
+        normalized = str(path_value).replace("\\", "/")
+        return normalized.rsplit("/", 1)[-1]
+
+    @staticmethod
+    def _parent_hint_from_any_path(path_value):
+        normalized = str(path_value or "").replace("\\", "/")
+        parts = [part.lower() for part in normalized.split("/") if part]
+        for hint in ("sp", "nv"):
+            if hint in parts:
+                return hint
+        return ""
+
+    @staticmethod
+    def _pick_audio_candidate(candidates, parent_hint):
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+        if parent_hint:
+            hinted = [path for path in candidates if path.parent.name.lower() == parent_hint]
+            if len(hinted) == 1:
+                return hinted[0]
+        return candidates[0]
 
     def _choose_open_audio_files(self):
         start_dir = ""
@@ -891,6 +1150,7 @@ class Controller(QObject):
         self.window.update_current_file("")
         self.window.update_stats(np.nan, np.nan, np.nan, 0.0)
         self.window.update_durations(0.0, 0.0)
+        self.window.update_selected_pitch_point(None, None)
         self.window.update_pitch_source("")
         self.window.statusbar.showMessage("File list cleared.", 3000)
 
@@ -904,6 +1164,10 @@ class Controller(QObject):
         self.window.update_current_file(entry.filepath)
         self._undo_stack.clear()
         self._apply_params_to_controls(entry.params)
+        self.window.canvas.clear_selected_point()
+
+        if entry.state_snapshot is not None and not self._same_audio_path(entry.state_snapshot.get("audio_path"), entry.filepath):
+            entry.state_snapshot = None
 
         if entry.state_snapshot is not None and entry.spectrogram_cache is not None:
             self._suppress_dirty_tracking = True
@@ -928,7 +1192,10 @@ class Controller(QObject):
             return
 
         self._loading_entry_index = index
+        self.state.reset()
         self.state.audio_path = entry.filepath
+        self.window.canvas.img_item.clear()
+        self.window.update_durations(0.0, 0.0)
         self.window.statusbar.showMessage(f"Loading {Path(entry.filepath).name}...")
         self.request_load.emit(index, entry.filepath)
 
@@ -938,12 +1205,16 @@ class Controller(QObject):
         entry = self.batch_entries[entry_index]
         if entry.filepath != filepath:
             return
-        entry.spectrogram_cache = {"S_db": S_db, "times": times, "freqs": freqs}
+        entry.spectrogram_cache = {
+            "S_db": np.array(S_db, copy=True),
+            "times": np.array(times, copy=True),
+            "freqs": np.array(freqs, copy=True),
+        }
         if entry_index != self.current_entry_index:
             return
         self.state.reset()
         self.state.audio_path = entry.filepath
-        self.state.set_audio_data(audio_data, sr)
+        self.state.set_audio_data(np.array(audio_data, copy=True), sr)
         self.window.canvas.update_spectrogram(S_db, times, freqs)
         if entry.view_range_x is not None or entry.view_range_y is not None:
             self.window.canvas.set_view_ranges(entry.view_range_x, entry.view_range_y)
@@ -955,8 +1226,34 @@ class Controller(QObject):
             float(times[-1]) if len(times) else 0.0,
             max(0.0, entry.selection_region[1] - entry.selection_region[0]) if entry.region_visible else 0.0,
         )
+        if entry.imported_pitch is not None:
+            self._apply_imported_pitch_to_loaded_entry(entry, audio_data, sr)
+            return
         self.window.statusbar.showMessage("Audio loaded. Computing initial pitch...")
         self._handle_recompute()
+
+    def _apply_imported_pitch_to_loaded_entry(self, entry, audio_data, sr):
+        payload = entry.imported_pitch
+        if payload is None:
+            return
+        self._suppress_dirty_tracking = True
+        self.state.audio_path = entry.filepath
+        self.state.set_audio_data(np.array(audio_data, copy=True), sr)
+        self._apply_params_to_state(entry.params)
+        self.state.update_pitch_data(
+            np.array(payload["timestamps"], copy=True),
+            np.array(payload["pitch_values"], copy=True),
+            np.array(payload["segment_labels"], copy=True),
+            pitch_source=f"Imported pitch CSV: {Path(payload['csv_path']).name}",
+        )
+        self._save_current_entry_state()
+        self._loading_entry_index = -1
+        self._suppress_dirty_tracking = False
+        self.window.statusbar.showMessage(
+            f"Imported pitch CSV for {Path(entry.filepath).name}. Refreshing formants...",
+            3000,
+        )
+        self._refresh_formants_from_state()
 
     def _handle_recompute(self):
         if self.current_entry_index < 0 or self.current_entry_index >= len(self.batch_entries):
@@ -981,6 +1278,7 @@ class Controller(QObject):
         self.state.octave_jump_cost = octave_jump_cost
         self.state.voiced_unvoiced_cost = voiced_unvoiced_cost
         self.batch_entries[self.current_entry_index].params = self._current_pitch_params()
+        self.batch_entries[self.current_entry_index].imported_pitch = None
         self.batch_entries[self.current_entry_index].acoustic_row = None
 
         self.window.statusbar.showMessage("Computing pitch...")
@@ -1019,6 +1317,7 @@ class Controller(QObject):
             entry.params = dict(params)
             entry.acoustic_row = None
             entry.state_snapshot = None
+            entry.imported_pitch = None
             entry.dirty = False
             self.window.update_audio_file_entry(index, entry.filepath, False)
 
@@ -1042,6 +1341,8 @@ class Controller(QObject):
         entry = self.batch_entries[entry_index]
         if entry.filepath != filepath or entry_index != self.current_entry_index:
             return
+        if self.state.audio_data is None or not self._same_audio_path(self.state.audio_path, entry.filepath):
+            return
         self.state.update_pitch_data(
             timestamps,
             pitch_values,
@@ -1063,6 +1364,8 @@ class Controller(QObject):
         entry = self.batch_entries[self.current_entry_index]
         if self.state.audio_data is None or self.state.sample_rate is None:
             return
+        if not self._same_audio_path(self.state.audio_path, entry.filepath):
+            return
         entry.state_snapshot = self.state.snapshot_full_state()
         start, end = self.window.canvas.get_selected_region()
         entry.selection_region = (float(start), float(end))
@@ -1072,6 +1375,26 @@ class Controller(QObject):
         entry.view_range_y = view_range_y
         entry.params = self._current_pitch_params()
         entry.acoustic_row = None
+
+    @staticmethod
+    def _same_audio_path(left, right):
+        if not left or not right:
+            return False
+        try:
+            return Path(str(left)).resolve() == Path(str(right)).resolve()
+        except Exception:
+            return str(left) == str(right)
+
+    def _apply_params_to_state(self, params):
+        self.state.pitch_floor = float(params["pitch_floor"])
+        self.state.pitch_ceiling = float(params["pitch_ceiling"])
+        self.state.time_step = float(params["time_step"])
+        self.state.filtered_ac_attenuation_at_top = float(params.get("filtered_ac_attenuation_at_top", 0.03))
+        self.state.voicing_threshold = float(params["voicing_threshold"])
+        self.state.silence_threshold = float(params["silence_threshold"])
+        self.state.octave_cost = float(params["octave_cost"])
+        self.state.octave_jump_cost = float(params["octave_jump_cost"])
+        self.state.voiced_unvoiced_cost = float(params["voiced_unvoiced_cost"])
 
     def _apply_params_to_controls(self, params):
         self.window.control_panel.spin_floor.setValue(int(params["pitch_floor"]))
@@ -1104,14 +1427,24 @@ class Controller(QObject):
             self._save_current_entry_state()
 
     def _refresh_formants_from_state(self):
+        if self.current_entry_index < 0 or self.current_entry_index >= len(self.batch_entries):
+            return
         if self.state.audio_data is None or self.state.sample_rate is None:
             return
-        formant_times, f1_values, f2_values, f3_values = self.processor.extract_formants_for_track(
-            self.state.timestamps,
-            self.state.pitch_values,
-            self.state.segment_labels,
+        self.request_formants.emit(
+            self.current_entry_index,
+            self.state.audio_path,
+            np.array(self.state.timestamps, copy=True),
+            np.array(self.state.pitch_values, copy=True),
+            np.array(self.state.segment_labels, copy=True),
         )
+
+    def _on_formants_finished(self, entry_index, filepath, formant_times, f1_values, f2_values, f3_values):
+        if entry_index != self.current_entry_index or not self._same_audio_path(self.state.audio_path, filepath):
+            return
         self.state.update_formant_data(formant_times, f1_values, f2_values, f3_values)
+        count = min(len(formant_times), len(f1_values), len(f2_values), len(f3_values))
+        self.window.statusbar.showMessage(f"Formants refreshed ({count} points).", 3000)
 
     def _handle_add_point(self, time_val, freq_val):
         if self.state.audio_path is None:
@@ -1124,16 +1457,19 @@ class Controller(QObject):
             return
         self.state.add_or_update_point(time_val, snapped_freq)
         self._mark_current_entry_dirty()
+        self._refresh_formants_from_state()
 
     def _handle_remove_point(self, time_val):
         self._push_undo_state()
         self.state.remove_point(time_val)
         self._mark_current_entry_dirty()
+        self._refresh_formants_from_state()
 
     def _handle_modify_point(self, time_val, freq_val):
         if self.state.audio_path is None:
             return
         self.state.add_or_update_point(time_val, freq_val)
+        self._point_drag_modified = True
         self._mark_current_entry_dirty()
 
     def _handle_point_drag_started(self):
@@ -1142,6 +1478,9 @@ class Controller(QObject):
             self._drag_edit_active = True
 
     def _handle_point_drag_finished(self):
+        if self._point_drag_modified:
+            self._refresh_formants_from_state()
+        self._point_drag_modified = False
         self._drag_edit_active = False
 
     def _handle_region_shift_started(self):
@@ -1205,7 +1544,8 @@ class Controller(QObject):
             self.window.statusbar.showMessage("No frames found in selected region.", 3000)
             return
         self.state.set_voiced(region_start, region_end, region_values)
-        self.window.statusbar.showMessage(f"Selected region set to voiced. Voice%: {self.state.voice_percent:.1f}", 3000)
+        self._refresh_formants_from_state()
+        self.window.statusbar.showMessage(f"Selected region set to voiced. Refreshing formants... Voice%: {self.state.voice_percent:.1f}", 3000)
 
     def _handle_set_region_unvoiced(self):
         selected_region = self._get_visible_selected_region()
@@ -1245,13 +1585,6 @@ class Controller(QObject):
             self.batch_entries[self.current_entry_index].selection_region = (float(start_time), float(end_time))
             self.batch_entries[self.current_entry_index].region_visible = self.window.canvas.region_item.isVisible()
 
-    def _handle_region_toggled(self, show):
-        self.window.canvas.show_region(show)
-        if 0 <= self.current_entry_index < len(self.batch_entries):
-            self.batch_entries[self.current_entry_index].region_visible = bool(show)
-        start, end = self.window.canvas.get_selected_region()
-        self._handle_selection_changed(start, end)
-
     def _push_undo_state(self):
         if len(self.state.pitch_values) == 0:
             return
@@ -1266,7 +1599,9 @@ class Controller(QObject):
         snapshot = self._undo_stack.pop()
         self.state.restore_edit_state(snapshot)
         self._drag_edit_active = False
+        self._point_drag_modified = False
         self._mark_current_entry_dirty()
+        self._refresh_formants_from_state()
         self.window.statusbar.showMessage("Undid last edit.", 2000)
 
     def _default_export_path(self, suffix):
@@ -1366,6 +1701,14 @@ class Controller(QObject):
 
     def _compute_entry_acoustic_row(self, entry: BatchAudioEntry):
         if entry.state_snapshot is None:
+            if entry.imported_pitch is not None:
+                return compute_feature_row_with_pitch_overrides(
+                    entry.filepath,
+                    entry.params,
+                    entry.imported_pitch["timestamps"],
+                    entry.imported_pitch["pitch_values"],
+                    entry.imported_pitch["segment_labels"],
+                )
             return compute_feature_row_with_pitch_overrides(entry.filepath, entry.params)
         row = compute_feature_row_with_pitch_overrides(
             entry.filepath,
@@ -1379,6 +1722,22 @@ class Controller(QObject):
 
     def _entry_export_payload(self, entry: BatchAudioEntry):
         if entry.state_snapshot is None:
+            if entry.imported_pitch is not None:
+                payload = entry.imported_pitch
+                return {
+                    "audio_path": entry.filepath,
+                    "pitch_params": dict(entry.params),
+                    "timestamps": np.array(payload["timestamps"], copy=True),
+                    "pitch_values": np.array(payload["pitch_values"], copy=True),
+                    "segment_labels": np.array(payload["segment_labels"], copy=True),
+                    "spectrogram_cache": None if entry.spectrogram_cache is None else {
+                        "S_db": np.array(entry.spectrogram_cache["S_db"], copy=True),
+                        "times": np.array(entry.spectrogram_cache["times"], copy=True),
+                        "freqs": np.array(entry.spectrogram_cache["freqs"], copy=True),
+                    },
+                    "view_range_x": entry.view_range_x,
+                    "view_range_y": entry.view_range_y,
+                }
             return {
                 "audio_path": entry.filepath,
                 "pitch_params": dict(entry.params),
@@ -1606,46 +1965,13 @@ class Controller(QObject):
 
     def _handle_volume_changed(self, value):
         self._playback_volume = max(0.0, min(1.0, value / 100.0))
-        if self._audio_sink is not None:
-            self._audio_sink.setVolume(self._playback_volume)
 
     def _refresh_audio_output_devices(self):
-        prev_device_id = b""
-        if self._audio_output_devices and 0 <= self._selected_audio_output_index < len(self._audio_output_devices):
-            prev_device_id = bytes(self._audio_output_devices[self._selected_audio_output_index].id()) if hasattr(self._audio_output_devices[self._selected_audio_output_index], "id") else b""
-
-        self._audio_output_devices = list(QMediaDevices.audioOutputs())
-        default_device = QMediaDevices.defaultAudioOutput()
-        default_id = bytes(default_device.id()) if hasattr(default_device, "id") else b""
-        selected_index = 0
-        device_names = []
-        for idx, device in enumerate(self._audio_output_devices):
-            device_names.append(device.description())
-            device_id = bytes(device.id()) if hasattr(device, "id") else b""
-            if prev_device_id and device_id == prev_device_id:
-                selected_index = idx
-            elif default_id and device_id == default_id:
-                selected_index = idx
-        if not device_names:
-            device_names = ["System Default"]
-            self._selected_audio_output_index = 0
-        else:
-            self._selected_audio_output_index = min(self._selected_audio_output_index, len(device_names) - 1)
-            if self._selected_audio_output_index == 0:
-                self._selected_audio_output_index = selected_index
-        self.window.control_panel.set_audio_output_devices(device_names, self._selected_audio_output_index)
-        self.window.statusbar.showMessage(f"Audio output devices refreshed ({len(device_names)} found)", 3000)
+        self.window.control_panel.set_audio_output_devices(["System Default (macOS)"], 0)
+        self.window.statusbar.showMessage("Using macOS system default audio output.", 3000)
 
     def _handle_audio_output_device_changed(self, index):
-        if not self._audio_output_devices:
-            self._selected_audio_output_index = 0
-            return
-        self._selected_audio_output_index = max(0, min(int(index), len(self._audio_output_devices) - 1))
-        if self._audio_sink is not None:
-            self.window.statusbar.showMessage(
-                f"Playback device set to {self._audio_output_devices[self._selected_audio_output_index].description()}",
-                3000,
-            )
+        self.window.statusbar.showMessage("Playback uses the macOS system default output.", 3000)
 
     def _mark_current_entry_dirty(self):
         if self._suppress_dirty_tracking:
@@ -1704,6 +2030,9 @@ class Controller(QObject):
 
     def _handle_play_selection(self):
         if self.state.audio_data is None or self.state.sample_rate is None:
+            if self._loading_entry_index == self.current_entry_index:
+                self.window.statusbar.showMessage("Audio is still loading.", 3000)
+                return
             self.window.statusbar.showMessage("No audio loaded.", 3000)
             return
         start_time, end_time = self.window.canvas.get_selected_region()
@@ -1721,6 +2050,9 @@ class Controller(QObject):
 
     def _handle_play_pitch_track(self):
         if self.state.audio_data is None or self.state.sample_rate is None:
+            if self._loading_entry_index == self.current_entry_index:
+                self.window.statusbar.showMessage("Audio is still loading.", 3000)
+                return
             self.window.statusbar.showMessage("No audio loaded.", 3000)
             return
         if len(self.state.timestamps) == 0 or len(self.state.pitch_values) == 0:
@@ -1766,64 +2098,72 @@ class Controller(QObject):
             amp_samples[-fade_samples:] *= fade[::-1]
         return waveform.astype(np.float32) * amp_samples
 
+    def _stop_audio_playback(self):
+        process = self._playback_process
+        temp_path = self._playback_temp_path
+        self._playback_process = None
+        self._playback_temp_path = None
+
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=1.0)
+        if temp_path:
+            try:
+                Path(temp_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    def _cleanup_finished_playback(self):
+        process = self._playback_process
+        if process is not None and process.poll() is not None:
+            temp_path = self._playback_temp_path
+            self._playback_process = None
+            self._playback_temp_path = None
+            if temp_path:
+                try:
+                    Path(temp_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
     def _play_clip(self, clip, sr, status_message):
         clip = np.asarray(clip, dtype=np.float32)
         if clip.size == 0:
             self.window.statusbar.showMessage("Selected region is empty.", 3000)
             return
 
-        if self._audio_sink is not None:
-            self._audio_sink.stop()
-            self._audio_sink.deleteLater()
-            self._audio_sink = None
-        if self._audio_buffer is not None:
-            self._audio_buffer.close()
-            self._audio_buffer.deleteLater()
-            self._audio_buffer = None
-
-        if self._audio_output_devices and 0 <= self._selected_audio_output_index < len(self._audio_output_devices):
-            audio_device = self._audio_output_devices[self._selected_audio_output_index]
-        else:
-            audio_device = QMediaDevices.defaultAudioOutput()
-        preferred = audio_device.preferredFormat()
-        out_sr = preferred.sampleRate() if preferred.sampleRate() > 0 else int(sr)
-        out_channels = preferred.channelCount() if preferred.channelCount() > 0 else 2
-        out_format = preferred.sampleFormat()
-
-        if out_sr != int(sr) and out_sr > 0 and clip.size > 1:
-            target_count = max(1, int(math.ceil(len(clip) * out_sr / float(sr))))
-            source_x = np.linspace(0.0, 1.0, num=len(clip), endpoint=False)
-            target_x = np.linspace(0.0, 1.0, num=target_count, endpoint=False)
-            clip = np.interp(target_x, source_x, clip).astype(np.float32)
+        self._cleanup_finished_playback()
+        self._stop_audio_playback()
 
         clip = np.clip(clip, -1.0, 1.0)
-        if out_channels > 1:
-            samples = np.repeat(clip[:, None], out_channels, axis=1)
-        else:
-            samples = clip[:, None]
+        if self._playback_volume < 1.0:
+            clip = clip * float(self._playback_volume)
 
-        if out_format == QAudioFormat.SampleFormat.UInt8:
-            pcm_bytes = np.asarray((samples * 127.5) + 127.5, dtype=np.uint8).tobytes()
-        elif out_format == QAudioFormat.SampleFormat.Int16:
-            pcm_bytes = np.asarray(samples * 32767.0, dtype=np.int16).tobytes()
-        elif out_format == QAudioFormat.SampleFormat.Int32:
-            pcm_bytes = np.asarray(samples * 2147483647.0, dtype=np.int32).tobytes()
-        else:
-            pcm_bytes = np.asarray(samples, dtype=np.float32).tobytes()
+        temp_file = tempfile.NamedTemporaryFile(prefix="pitch_annotator_playback_", suffix=".wav", delete=False)
+        temp_path = temp_file.name
+        temp_file.close()
+        try:
+            sf.write(temp_path, clip.astype(np.float32), int(sr))
+            process = subprocess.Popen(
+                ["afplay", temp_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as exc:
+            try:
+                Path(temp_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+            self.window.statusbar.showMessage(f"Audio playback failed: {exc}", 5000)
+            return
 
-        byte_array = QByteArray(pcm_bytes)
-        buffer = QBuffer(self.window)
-        buffer.setData(byte_array)
-        buffer.open(QIODevice.ReadOnly)
-
-        sink = QAudioSink(audio_device, preferred, self.window)
-        sink.setVolume(self._playback_volume)
-        sink.start(buffer)
-
-        self._audio_buffer = buffer
-        self._audio_sink = sink
+        self._playback_temp_path = temp_path
+        self._playback_process = process
         self.window.statusbar.showMessage(
-            f"{status_message} [{out_sr} Hz, {out_channels} ch]",
+            f"{status_message} [{int(sr)} Hz, system output]",
             3000,
         )
 
@@ -1848,14 +2188,7 @@ class Controller(QObject):
         if self._cleaned_up:
             return
         self._cleaned_up = True
-        if self._audio_sink is not None:
-            self._audio_sink.stop()
-            self._audio_sink.deleteLater()
-            self._audio_sink = None
-        if self._audio_buffer is not None:
-            self._audio_buffer.close()
-            self._audio_buffer.deleteLater()
-            self._audio_buffer = None
+        self._stop_audio_playback()
         self.thread.quit()
         self.thread.wait()
         self.thread.deleteLater()

@@ -70,14 +70,22 @@ def _build_active_intervals_from_labels(timestamps, segment_labels):
     if len(timestamps) == 0 or len(segment_labels) == 0 or len(timestamps) != len(segment_labels):
         return []
 
+    return _build_intervals_from_mask(timestamps, segment_labels != 0)
+
+
+def _build_intervals_from_mask(timestamps, mask):
+    timestamps = np.asarray(timestamps, dtype=float)
+    mask = np.asarray(mask, dtype=bool)
+    if len(timestamps) == 0 or len(mask) == 0 or len(timestamps) != len(mask):
+        return []
+
     half_width = _estimate_frame_half_width(timestamps)
-    active_mask = segment_labels != 0
-    if not np.any(active_mask):
+    if not np.any(mask):
         return []
 
     intervals = []
     start_idx = None
-    for idx, is_active in enumerate(active_mask):
+    for idx, is_active in enumerate(mask):
         if is_active and start_idx is None:
             start_idx = idx
         elif (not is_active) and start_idx is not None:
@@ -147,7 +155,7 @@ def _empty_active_override_row():
     }
 
 
-def _compute_activity_dependent_metrics(audio_path, active_intervals, pitch_params):
+def _compute_activity_dependent_metrics(audio_path, active_intervals, voiced_intervals, pitch_params):
     if not active_intervals:
         return _empty_active_override_row()
 
@@ -197,20 +205,25 @@ def _compute_activity_dependent_metrics(audio_path, active_intervals, pitch_para
         int_mean = int_median = int_sd = int_p20 = int_p80 = int_range_20_80 = np.nan
         int_frac_rise = int_frac_fall = np.nan
 
+    voiced_duration = float(sum(end - start for start, end in voiced_intervals))
+    voiced_snd = analysis.extract_active_sound(snd_raw, voiced_intervals) if voiced_duration >= 0.05 else None
     min_pitch = float(pitch_params["pitch_floor"])
     max_pitch = float(pitch_params["pitch_ceiling"])
-    try:
-        point_process = parselmouth.praat.call(snd, "To PointProcess (periodic, cc)", min_pitch, max_pitch)
-        jitter = float(parselmouth.praat.call(point_process, "Get jitter (local)", 0, 0, 0.0001, 0.02, 1.3))
-        shimmer = float(parselmouth.praat.call([snd, point_process], "Get shimmer (local)", 0, 0, 0.0001, 0.02, 1.3, 1.6))
-    except Exception:
-        jitter, shimmer = np.nan, np.nan
+    if voiced_snd is None or voiced_snd.duration <= 0:
+        jitter, shimmer, hnr = np.nan, np.nan, np.nan
+    else:
+        try:
+            point_process = parselmouth.praat.call(voiced_snd, "To PointProcess (periodic, cc)", min_pitch, max_pitch)
+            jitter = float(parselmouth.praat.call(point_process, "Get jitter (local)", 0, 0, 0.0001, 0.02, 1.3))
+            shimmer = float(parselmouth.praat.call([voiced_snd, point_process], "Get shimmer (local)", 0, 0, 0.0001, 0.02, 1.3, 1.6))
+        except Exception:
+            jitter, shimmer = np.nan, np.nan
 
-    try:
-        harmonicity = snd.to_harmonicity_cc()
-        hnr = float(parselmouth.praat.call(harmonicity, "Get mean", 0, 0))
-    except Exception:
-        hnr = np.nan
+        try:
+            harmonicity = voiced_snd.to_harmonicity_cc()
+            hnr = float(parselmouth.praat.call(harmonicity, "Get mean", 0, 0))
+        except Exception:
+            hnr = np.nan
 
     try:
         spectrum = snd.to_spectrum()
@@ -308,8 +321,10 @@ def compute_feature_row_with_pitch_overrides(audio_path, pitch_params, timestamp
         segment_labels = np.where(np.isnan(pitch_values), 1, 2).astype(int)
 
     active_mask = segment_labels != 0
-    voiced_mask = active_mask & (~np.isnan(pitch_values)) & (pitch_values > 0)
+    voiced_mask = (segment_labels == 2) & (~np.isnan(pitch_values)) & (pitch_values > 0)
     active_intervals = _build_active_intervals_from_labels(timestamps, segment_labels)
+    voiced_intervals = _build_intervals_from_mask(timestamps, voiced_mask)
+    voiced_duration = float(sum(end - start for start, end in voiced_intervals))
     active_times, active_pitch_values, _ = _project_track_to_active_timeline(
         timestamps,
         pitch_values,
@@ -321,7 +336,8 @@ def compute_feature_row_with_pitch_overrides(audio_path, pitch_params, timestamp
     row["F0_octave_jump_count"] = int(octave_jump_count)
     active_count = int(np.sum(active_mask))
     voiced_percent = float(np.sum(voiced_mask) / active_count) if active_count > 0 else 0.0
-    row.update(_compute_activity_dependent_metrics(audio_path, active_intervals, pitch_params))
+    row.update(_compute_activity_dependent_metrics(audio_path, active_intervals, voiced_intervals, pitch_params))
+    row["Voiced_duration_s"] = voiced_duration
 
     duration = float(sum(end - start for start, end in active_intervals))
     voiced_segments_count = 0

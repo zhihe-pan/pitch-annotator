@@ -20,6 +20,7 @@ def hz_to_semitone(freq_hz: float) -> float:
 
 class MainWindow(QMainWindow):
     open_audio_requested = Signal()
+    import_pitch_csv_requested = Signal()
     batch_export_acoustic_csv_requested = Signal()
     batch_export_pitch_csv_requested = Signal()
     batch_export_spectrograms_requested = Signal()
@@ -32,6 +33,9 @@ class MainWindow(QMainWindow):
     play_selection_requested = Signal()
     play_pitch_track_requested = Signal()
     undo_requested = Signal()
+    set_region_voiced_requested = Signal()
+    set_region_unvoiced_requested = Signal()
+    set_region_silence_requested = Signal()
     current_audio_index_changed = Signal(int)
     next_audio_requested = Signal()
     previous_audio_requested = Signal()
@@ -158,6 +162,9 @@ class MainWindow(QMainWindow):
         
         action_open = file_menu.addAction("Import Audio Files...")
         action_open.triggered.connect(self.open_audio_requested.emit)
+
+        action_import_pitch_csv = file_menu.addAction("Import Pitch CSVs...")
+        action_import_pitch_csv.triggered.connect(self.import_pitch_csv_requested.emit)
         
         file_menu.addSeparator()
         
@@ -194,11 +201,19 @@ class MainWindow(QMainWindow):
         self.lbl_current_file = QLabel("Current file: None")
         self.lbl_current_file.setMinimumWidth(220)
         self.lbl_duration = QLabel("Total: 0.000s | Selection: 0.000s")
+        self.lbl_selected_point = QLabel("Point: N/A")
+        self.lbl_selected_point.setMinimumWidth(150)
+        self.lbl_selected_point.setToolTip("Selected pitch point: N/A")
         self.lbl_voice = QLabel("Voice%: N/A")
         self.lbl_voice.setToolTip("F0 Stats: N/A | Pitch source: Unknown")
+        self.lbl_pitch_source = QLabel("Pitch source: Unknown")
+        self.lbl_pitch_source.setMinimumWidth(170)
+        self.lbl_pitch_source.setToolTip("Pitch source: Unknown")
         self.statusbar.addWidget(self.lbl_current_file, 1)
         self.statusbar.addWidget(self.lbl_duration)
+        self.statusbar.addPermanentWidget(self.lbl_selected_point)
         self.statusbar.addPermanentWidget(self.lbl_voice)
+        self.statusbar.addPermanentWidget(self.lbl_pitch_source)
 
     def _setup_shortcuts(self):
         self.shortcut_play_selection = QShortcut(QKeySequence(Qt.Key_Space), self)
@@ -207,6 +222,12 @@ class MainWindow(QMainWindow):
         self.shortcut_play_pitch_track.activated.connect(self.play_pitch_track_requested.emit)
         self.shortcut_undo = QShortcut(QKeySequence.Undo, self)
         self.shortcut_undo.activated.connect(self.undo_requested.emit)
+        self.shortcut_set_region_voiced = QShortcut(QKeySequence("1"), self)
+        self.shortcut_set_region_voiced.activated.connect(self.set_region_voiced_requested.emit)
+        self.shortcut_set_region_unvoiced = QShortcut(QKeySequence("2"), self)
+        self.shortcut_set_region_unvoiced.activated.connect(self.set_region_unvoiced_requested.emit)
+        self.shortcut_set_region_silence = QShortcut(QKeySequence("3"), self)
+        self.shortcut_set_region_silence.activated.connect(self.set_region_silence_requested.emit)
         self.shortcut_next_audio = QShortcut(QKeySequence(Qt.Key_Down), self)
         self.shortcut_next_audio.activated.connect(self.next_audio_requested.emit)
         self.shortcut_previous_audio = QShortcut(QKeySequence(Qt.Key_Up), self)
@@ -220,12 +241,19 @@ class MainWindow(QMainWindow):
         p20_st = hz_to_semitone(float(p20))
         p50_st = hz_to_semitone(float(p50))
         p80_st = hz_to_semitone(float(p80))
-        self._last_stats_text = (
-            f"F0 20%: {p20:.1f}Hz ({p20_st:.1f}st) | "
-            f"50%: {p50:.1f}Hz ({p50_st:.1f}st) | "
-            f"80%: {p80:.1f}Hz ({p80_st:.1f}st)"
-        )
-        self.lbl_voice.setText(f"Voice%: {voice_percent:.1f}")
+        if not math.isfinite(float(p20)) or float(p20) <= 0:
+            self._last_stats_text = "F0 Stats: N/A"
+            self.lbl_voice.setText(f"Voice%: {voice_percent:.1f} | F0: N/A")
+        else:
+            self._last_stats_text = (
+                f"F0 20%: {p20:.1f}Hz ({p20_st:.1f}st) | "
+                f"50%: {p50:.1f}Hz ({p50_st:.1f}st) | "
+                f"80%: {p80:.1f}Hz ({p80_st:.1f}st)"
+            )
+            self.lbl_voice.setText(
+                f"Voice%: {voice_percent:.1f} | "
+                f"F0 20/50/80: {p20:.1f}/{p50:.1f}/{p80:.1f}Hz"
+            )
         source = getattr(self, "_last_pitch_source", "")
         tip = self._last_stats_text
         if source:
@@ -237,13 +265,33 @@ class MainWindow(QMainWindow):
             f"Total: {total_duration:.3f}s | Selection: {selection_duration:.3f}s"
         )
 
+    def update_selected_pitch_point(self, time_value, pitch_value):
+        if time_value is None or pitch_value is None:
+            self.lbl_selected_point.setText("Point: N/A")
+            self.lbl_selected_point.setToolTip("Selected pitch point: N/A")
+            return
+        pitch = float(pitch_value)
+        time_pos = float(time_value)
+        semitone = hz_to_semitone(pitch)
+        text = f"Point: {pitch:.1f}Hz @ {time_pos:.3f}s"
+        self.lbl_selected_point.setText(text)
+        self.lbl_selected_point.setToolTip(
+            f"Selected pitch point: {pitch:.3f} Hz ({semitone:.3f} st) at {time_pos:.6f} s"
+        )
+
     def update_pitch_source(self, source_text):
+        source_text = source_text or "Unknown"
         self._last_pitch_source = source_text
+        display_text = f"Pitch source: {source_text}"
+        metrics = QFontMetrics(self.lbl_pitch_source.font())
+        elided = metrics.elidedText(display_text, Qt.ElideMiddle, max(170, self.lbl_pitch_source.width() - 8))
+        self.lbl_pitch_source.setText(elided)
+        self.lbl_pitch_source.setToolTip(display_text)
         stats = getattr(self, "_last_stats_text", "")
         tip = stats if stats else ""
         if tip:
             tip += " | "
-        tip += f"Pitch source: {source_text}"
+        tip += display_text
         self.lbl_voice.setToolTip(tip)
 
     def update_current_file(self, filepath):

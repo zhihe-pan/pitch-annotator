@@ -7,7 +7,6 @@ class ControlPanel(QWidget):
     # Signals
     parameters_changed = Signal(float, float, float, float, float, float, float, float, float)
     recompute_requested = Signal()
-    region_toggled = Signal(bool)
     set_region_voiced = Signal()
     set_region_unvoiced = Signal()
     set_region_silence = Signal()
@@ -130,9 +129,6 @@ class ControlPanel(QWidget):
         vbox_tools.setSpacing(6)
         vbox_tools.setContentsMargins(8, 10, 8, 8)
 
-        self.btn_toggle_region = configure_button(QPushButton("Show Region Box"))
-        self.btn_toggle_region.setCheckable(True)
-
         btn_set_voiced = configure_button(QPushButton("Set Region to Voiced"))
         btn_set_unvoiced = configure_button(QPushButton("Set Region to Unvoiced"))
         btn_set_silence = configure_button(QPushButton("Set Region to Silence"))
@@ -140,12 +136,12 @@ class ControlPanel(QWidget):
         instr = QLabel(
             "Alt+Click: Add Point\n"
             "Alt+Shift+Click: Remove Point\n"
+            "1/2/3: Set Region Voiced/Unvoiced/Silence\n"
             "Space: Play Region\n"
             "Shift+Space: Play Pitch Track"
         )
         instr.setWordWrap(True)
         vbox_tools.addWidget(instr)
-        vbox_tools.addWidget(self.btn_toggle_region)
         vbox_tools.addWidget(btn_set_voiced)
         vbox_tools.addWidget(btn_set_unvoiced)
         vbox_tools.addWidget(btn_set_silence)
@@ -182,7 +178,6 @@ class ControlPanel(QWidget):
 
         btn_recompute.clicked.connect(self._on_recompute)
         self.btn_apply_all.clicked.connect(self.apply_params_to_all_requested.emit)
-        self.btn_toggle_region.toggled.connect(self.region_toggled.emit)
         btn_set_voiced.clicked.connect(self.set_region_voiced.emit)
         btn_set_unvoiced.clicked.connect(self.set_region_unvoiced.emit)
         btn_set_silence.clicked.connect(self.set_region_silence.emit)
