@@ -1,9 +1,7 @@
 import parselmouth
-import pandas as pd
 import os
 import numpy as np
 import argparse
-from tqdm import tqdm
 from scipy.signal import find_peaks
 
 # Pitch 参数源统一放在 extract_by_speaker_voice_type.py。
@@ -608,6 +606,10 @@ def extract_acoustic_features(filepath):
 
 
 def extract_features_from_directory(input_dir):
+    # Optional dependencies for the standalone Excel workflow only.
+    import pandas as pd
+    from tqdm import tqdm
+
     input_dir = os.path.abspath(input_dir)
     wav_files = []
     for root, _, files in os.walk(input_dir):

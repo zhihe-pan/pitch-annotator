@@ -107,7 +107,7 @@ python -m pip install -r requirements.txt
 python build.py
 ```
 
-Outputs appear in `dist/` (PyInstaller) and `release/` (distributable archive). The packaging configuration does not yet explicitly bundle the dynamically loaded `acoustic_analysis/` directory; acoustic feature export in standalone builds is unverified. Use the source installation above for now.
+Outputs appear in `dist/` (PyInstaller) and `release/` (distributable archive). Standalone builds have not yet been verified; use the source installation above for now.
 
 ## Tech stack
 

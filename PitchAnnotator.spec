@@ -13,6 +13,7 @@ ROOT = Path(SPEC).resolve().parent
 datas = []
 binaries = []
 hiddenimports = [
+    "backend.acoustic_analysis",
     "soundfile",
     "scipy.special.cython_special",
 ]

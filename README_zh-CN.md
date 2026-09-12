@@ -105,7 +105,7 @@ python -m pip install -r requirements.txt
 python build.py
 ```
 
-输出在 `dist/`（PyInstaller 原始输出）和 `release/`（可分发压缩包）。目前打包配置尚未显式包含动态加载的 `acoustic_analysis/`，独立应用的声学特征导出未验证；建议先按源码安装方式使用。
+输出在 `dist/`（PyInstaller 原始输出）和 `release/`（可分发压缩包）。独立应用打包尚未验证；建议先按源码安装方式使用。
 
 ## 技术栈
 

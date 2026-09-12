@@ -1,31 +1,12 @@
 import csv
-import sys
-import types
-from pathlib import Path
 
 import numpy as np
 import parselmouth
 from core.exporter import PARAMETER_COLUMNS
-
-
-def _load_analysis_module():
-    root_dir = Path(__file__).resolve().parents[1]
-    analysis_dir = root_dir / "acoustic_analysis"
-    if not analysis_dir.exists():
-        analysis_dir = root_dir / "Acoustic_analysis"
-    analysis_path = str(analysis_dir)
-    if analysis_path not in sys.path:
-        sys.path.insert(0, analysis_path)
-    if "pandas" not in sys.modules:
-        sys.modules["pandas"] = types.SimpleNamespace(DataFrame=None)
-    if "tqdm" not in sys.modules:
-        sys.modules["tqdm"] = types.SimpleNamespace(tqdm=lambda iterable=None, **kwargs: iterable)
-    import AcousticAnalyses_Parselmouth as analysis  # type: ignore
-    return analysis
+from backend import acoustic_analysis as analysis
 
 
 def extract_acoustic_feature_row(audio_path, pitch_params):
-    analysis = _load_analysis_module()
     shared_preset = {
         "pitch_floor": float(pitch_params["pitch_floor"]),
         "pitch_ceiling": float(pitch_params["pitch_ceiling"]),
@@ -163,7 +144,6 @@ def _compute_activity_dependent_metrics(audio_path, active_intervals, voiced_int
     if active_duration < 0.05:
         return _empty_active_override_row()
 
-    analysis = _load_analysis_module()
     snd_raw = parselmouth.Sound(str(audio_path))
     snd = analysis.extract_active_sound(snd_raw, active_intervals)
     if snd is None or snd.duration <= 0:
@@ -331,7 +311,6 @@ def compute_feature_row_with_pitch_overrides(audio_path, pitch_params, timestamp
         segment_labels,
         active_intervals,
     )
-    analysis = _load_analysis_module()
     corrected_active_pitch, octave_jump_count, _ = analysis.correct_octave_jumps(active_pitch_values)
     row["F0_octave_jump_count"] = int(octave_jump_count)
     active_count = int(np.sum(active_mask))
@@ -431,7 +410,6 @@ def compute_formants_for_track(audio_path, timestamps, pitch_values, segment_lab
     if not active_intervals:
         return np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
 
-    analysis = _load_analysis_module()
     snd_raw = parselmouth.Sound(str(audio_path))
     snd = analysis.extract_active_sound(snd_raw, active_intervals)
     if snd is None or snd.duration <= 0:

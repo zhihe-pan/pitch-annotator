@@ -534,7 +534,7 @@ endfor
 
     def _detect_active_intervals(self, snd):
         """
-        Match the main analysis path in AcousticAnalyses_Parselmouth.py:
+        Match the main analysis path in backend/acoustic_analysis.py:
         detect speech intervals on the original timeline first, then classify
         frames inside those intervals as voiced/unvoiced.
         """
