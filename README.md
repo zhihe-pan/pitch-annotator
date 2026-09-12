@@ -31,7 +31,7 @@ A desktop GUI tool for manual correction of pitch (F0) tracks in speech and voic
 
 ## Reopening pitch tracks and acoustic features
 
-Use **File → Import Pitch CSVs…** to reopen exported pitch tracks for further correction or export. CSVs require `Time (s)` and `Frequency (Hz)`; optional columns include `SegmentLabel` (0=silence, 1=voiceless, 2=voiced), `audio_file`, and pitch parameters. Keep the original audio files. If automatic matching fails, import the corresponding audio first, then import the CSV.
+Use **File → Import Pitch CSVs…** to reopen exported pitch tracks for further correction or export. CSVs require `Time (s)` and `Frequency (Hz)`; optional columns include `SegmentLabel` (0=silence, 1=voiceless, 2=voiced), `audio_file`, and pitch parameters. **You can import CSVs directly without importing audio first.** The app first uses an existing audio path from the CSV's `audio_file` column. If that path is unavailable or omitted, it matches filenames in the app's `voicesample/` and `VoiceSample/` directories and the directories of already imported audio files. For example, `sample01_pitch.csv` or `sample01.csv` can match `sample01.wav`. Keep the original audio files and avoid duplicate audio filenames. Only if automatic matching fails do you need to import the corresponding audio first, then import the CSV.
 
 Acoustic feature export includes total voiced duration (`Voiced_duration_s`). When using current annotations, Jitter, Shimmer, and HNR are calculated from voiced audio segments.
 

@@ -29,7 +29,7 @@
 
 ## 重新导入与声学特征
 
-通过 **File → Import Pitch CSVs…** 可重新打开已导出的音高轨迹，继续校正或重新导出。CSV 必须包含 `Time (s)` 和 `Frequency (Hz)`，可包含 `SegmentLabel`（0=静音、1=无声、2=有声）、`audio_file` 和音高参数。仍需保留原始音频；若无法自动匹配，可先导入对应音频再导入 CSV。
+通过 **File → Import Pitch CSVs…** 可重新打开已导出的音高轨迹，继续校正或重新导出。CSV 必须包含 `Time (s)` 和 `Frequency (Hz)`，可包含 `SegmentLabel`（0=静音、1=无声、2=有声）、`audio_file` 和音高参数。**可以直接导入 CSV，无需先手动导入音频。** 程序优先读取 CSV 中 `audio_file` 指定的有效音频路径；若该路径不可用或未提供，则在工具目录的 `voicesample/`、`VoiceSample/` 及已导入音频所在目录中按文件名匹配。例如，`sample01_pitch.csv` 或 `sample01.csv` 可匹配 `sample01.wav`。请保留对应的原始音频，并避免音频文件重名。只有自动匹配失败时，才需要先导入对应音频，再导入 CSV。
 
 声学特征导出包含有声总时长 `Voiced_duration_s`；使用当前标注时，Jitter、Shimmer 和 HNR 基于有声片段计算。
 
