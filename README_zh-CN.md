@@ -31,7 +31,7 @@
 
 通过 **File → Import Pitch CSVs…** 可重新打开已导出的音高轨迹，继续校正或重新导出。CSV 必须包含 `Time (s)` 和 `Frequency (Hz)`，可包含 `SegmentLabel`（0=静音、1=无声、2=有声）、`audio_file` 和音高参数。仍需保留原始音频；若无法自动匹配，可先导入对应音频再导入 CSV。
 
-声学特征导出包含有声总时长 `Voiced_duration_s`；使用当前标注时，Jitter、Shimmer 和 HNR 基于有声片段计算。正式版不包含实验性的 `Jitter_pitch_track`、`Shimmer_pitch_track`。`acoustic_analysis/` 是声学特征导出的运行依赖，请保留整个目录。
+声学特征导出包含有声总时长 `Voiced_duration_s`；使用当前标注时，Jitter、Shimmer 和 HNR 基于有声片段计算。
 
 ## 安装
 

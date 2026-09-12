@@ -33,7 +33,7 @@ A desktop GUI tool for manual correction of pitch (F0) tracks in speech and voic
 
 Use **File → Import Pitch CSVs…** to reopen exported pitch tracks for further correction or export. CSVs require `Time (s)` and `Frequency (Hz)`; optional columns include `SegmentLabel` (0=silence, 1=voiceless, 2=voiced), `audio_file`, and pitch parameters. Keep the original audio files. If automatic matching fails, import the corresponding audio first, then import the CSV.
 
-Acoustic feature export includes total voiced duration (`Voiced_duration_s`). When using current annotations, Jitter, Shimmer, and HNR are calculated from voiced audio segments. Experimental `Jitter_pitch_track` and `Shimmer_pitch_track` fields are not included. Keep the `acoustic_analysis/` directory: it is a runtime dependency for acoustic feature export.
+Acoustic feature export includes total voiced duration (`Voiced_duration_s`). When using current annotations, Jitter, Shimmer, and HNR are calculated from voiced audio segments.
 
 ## Installation
 
