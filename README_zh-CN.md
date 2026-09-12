@@ -27,9 +27,15 @@
   - 批量导出：对所有已导入音频执行上述导出
 - **外部 Praat** — 可配置本地 Praat 进行音高提取
 
+## 重新导入与声学特征
+
+通过 **File → Import Pitch CSVs…** 可重新打开已导出的音高轨迹，继续校正或重新导出。CSV 必须包含 `Time (s)` 和 `Frequency (Hz)`，可包含 `SegmentLabel`（0=静音、1=无声、2=有声）、`audio_file` 和音高参数。仍需保留原始音频；若无法自动匹配，可先导入对应音频再导入 CSV。
+
+声学特征导出包含有声总时长 `Voiced_duration_s`；使用当前标注时，Jitter、Shimmer 和 HNR 基于有声片段计算。正式版不包含实验性的 `Jitter_pitch_track`、`Shimmer_pitch_track`。`acoustic_analysis/` 是声学特征导出的运行依赖，请保留整个目录。
+
 ## 安装
 
-**环境要求：** Python 3.11 或 3.12
+**环境要求：** Python 3.11 或 3.12。当前音频播放调用 macOS 的 `afplay`；Windows/Linux 播放尚不支持。
 
 ```bash
 git clone https://github.com/zhihe-pan/pitch-annotator.git
@@ -64,6 +70,7 @@ python main.py
 | 空格 | 播放选区（原始音频） |
 | Shift + 空格 | 播放选区（F0 合成音） |
 | Ctrl+Z | 撤销 |
+| 1 / 2 / 3 | 将选区标记为有声 / 无声 / 静音 |
 | 上 / 下方向键 | 上一个 / 下一个音频文件 |
 | Ctrl+Shift+E | 导出当前文件所有结果 |
 | Ctrl+Alt+Shift+E | 批量导出所有文件 |
@@ -72,7 +79,7 @@ python main.py
 
 1. **File → Import Audio Files…** — 选择一个或多个音频文件，设定初始音高参数
 2. 观察频谱图和音高轨迹，通过缩放、滚动、拖拽面板来定位
-3. 在控制面板中勾选 **Show Region** 来选择时间区间
+3. 在图中空白处按住左键拖动，选择时间区间
 4. 将区间标记为 Voiced / Voiceless / Silence
 5. 手动修正 pitch 点：Alt+Click 加点，Alt+Shift+Click 删点，拖拽移动
 6. **File → Export** 导出结果
@@ -98,7 +105,7 @@ python -m pip install -r requirements.txt
 python build.py
 ```
 
-输出在 `dist/`（PyInstaller 原始输出）和 `release/`（可分发压缩包）。
+输出在 `dist/`（PyInstaller 原始输出）和 `release/`（可分发压缩包）。目前打包配置尚未显式包含动态加载的 `acoustic_analysis/`，独立应用的声学特征导出未验证；建议先按源码安装方式使用。
 
 ## 技术栈
 

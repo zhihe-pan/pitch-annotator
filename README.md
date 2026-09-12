@@ -29,9 +29,15 @@ A desktop GUI tool for manual correction of pitch (F0) tracks in speech and voic
   - Batch export for all loaded audio files
 - **External Praat** — optionally use a local Praat installation for pitch extraction
 
+## Reopening pitch tracks and acoustic features
+
+Use **File → Import Pitch CSVs…** to reopen exported pitch tracks for further correction or export. CSVs require `Time (s)` and `Frequency (Hz)`; optional columns include `SegmentLabel` (0=silence, 1=voiceless, 2=voiced), `audio_file`, and pitch parameters. Keep the original audio files. If automatic matching fails, import the corresponding audio first, then import the CSV.
+
+Acoustic feature export includes total voiced duration (`Voiced_duration_s`). When using current annotations, Jitter, Shimmer, and HNR are calculated from voiced audio segments. Experimental `Jitter_pitch_track` and `Shimmer_pitch_track` fields are not included. Keep the `acoustic_analysis/` directory: it is a runtime dependency for acoustic feature export.
+
 ## Installation
 
-**Requirements:** Python 3.11 or 3.12
+**Requirements:** Python 3.11 or 3.12. Audio playback currently uses macOS `afplay`; Windows/Linux playback is not supported.
 
 ```bash
 git clone https://github.com/zhihe-pan/pitch-annotator.git
@@ -66,6 +72,7 @@ Install [Praat](https://www.fon.hum.uva.nl/praat/) and set the environment varia
 | Space | Play selected region (audio) |
 | Shift + Space | Play selected region (F0 tone) |
 | Ctrl+Z | Undo |
+| 1 / 2 / 3 | Mark selection as Voiced / Voiceless / Silence |
 | Up / Down | Previous / next audio file |
 | Ctrl+Shift+E | Export all for current file |
 | Ctrl+Alt+Shift+E | Export all for batch |
@@ -74,7 +81,7 @@ Install [Praat](https://www.fon.hum.uva.nl/praat/) and set the environment varia
 
 1. **File → Import Audio Files…** — select one or more audio files, set initial pitch parameters
 2. Inspect the spectrogram and pitch contour — zoom, pan, scroll as needed
-3. Toggle the **Region** tool in the control panel to select a time range
+3. Left-click and drag on empty plot space to select a time range
 4. Mark the region as Voiced / Voiceless / Silence
 5. Manually adjust pitch points: Alt+Click to add, Alt+Shift+Click to remove, drag to reposition
 6. **Export** — use File menu or shortcuts to save results
@@ -100,7 +107,7 @@ python -m pip install -r requirements.txt
 python build.py
 ```
 
-Outputs appear in `dist/` (PyInstaller) and `release/` (distributable archive).
+Outputs appear in `dist/` (PyInstaller) and `release/` (distributable archive). The packaging configuration does not yet explicitly bundle the dynamically loaded `acoustic_analysis/` directory; acoustic feature export in standalone builds is unverified. Use the source installation above for now.
 
 ## Tech stack
 
