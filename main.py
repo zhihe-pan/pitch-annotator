@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+import parselmouth
 import soundfile as sf
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot, QStandardPaths, QUrl
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPen, qRgb
@@ -22,6 +23,7 @@ from backend.acoustic_features import (
     export_acoustic_features_csv,
 )
 from backend.audio_core import AudioProcessor
+from core.pitch_track import validate_pitch_track
 from core.exporter import PARAMETER_COLUMNS, export_csv, export_praat_pitch
 from core.state import PitchState
 from ui.batch_import_dialog import BatchImportDialog
@@ -857,6 +859,7 @@ class Controller(QObject):
             try:
                 payload = self._read_pitch_csv(csv_path)
                 audio_path = self._resolve_audio_for_pitch_csv(payload, csv_path, audio_index)
+                validate_pitch_track(payload["timestamps"], payload["pitch_values"], payload["segment_labels"], duration=parselmouth.Sound(str(audio_path)).duration)
             except Exception as exc:
                 skipped.append(f"{Path(csv_path).name}: {exc}")
                 continue
@@ -910,7 +913,7 @@ class Controller(QObject):
             )
 
         self.window.set_current_audio_index(first_new_index)
-        self._switch_to_entry(first_new_index)
+        self._switch_to_entry(first_new_index, save_current=False)
 
     def _choose_pitch_csv_files(self):
         root_dir = Path(__file__).resolve().parent
@@ -948,8 +951,8 @@ class Controller(QObject):
             if value not in (None, ""):
                 try:
                     params[name] = float(value)
-                except ValueError:
-                    pass
+                except ValueError as exc:
+                    raise ValueError(f"Pitch parameter {name} must be numeric") from exc
 
         timestamps = []
         pitch_values = []
@@ -969,9 +972,19 @@ class Controller(QObject):
                 segment_label = int(float(label_value))
             except (TypeError, ValueError):
                 segment_label = 2 if np.isfinite(freq_value) and freq_value > 0 else 1
-            if segment_label not in (0, 1, 2):
-                segment_label = 2 if np.isfinite(freq_value) and freq_value > 0 else 1
+            if label_value not in (None, ""):
+                if float(label_value) not in (0, 1, 2):
+                    raise ValueError("SegmentLabel must be 0, 1 or 2")
+            if np.isinf(freq_value):
+                raise ValueError("Frequency (Hz) cannot be infinity")
             segment_labels.append(segment_label)
+
+        timestamps, pitch_values, segment_labels = validate_pitch_track(timestamps, pitch_values, segment_labels)
+        for name, value in params.items():
+            if not np.isfinite(value):
+                raise ValueError(f"Pitch parameter {name} must be finite")
+        if params["pitch_floor"] <= 0 or params["pitch_ceiling"] <= params["pitch_floor"] or params["time_step"] < 0:
+            raise ValueError("Invalid pitch bounds or time step")
 
         return {
             "csv_path": str(path),
@@ -1068,7 +1081,7 @@ class Controller(QObject):
             hinted = [path for path in candidates if path.parent.name.lower() == parent_hint]
             if len(hinted) == 1:
                 return hinted[0]
-        return candidates[0]
+        raise ValueError("Multiple matching audio files found; specify an exact audio_file path in the CSV.")
 
     def _choose_open_audio_files(self):
         start_dir = ""
@@ -1154,10 +1167,11 @@ class Controller(QObject):
         self.window.update_pitch_source("")
         self.window.statusbar.showMessage("File list cleared.", 3000)
 
-    def _switch_to_entry(self, index):
+    def _switch_to_entry(self, index, *, save_current=True):
         if index < 0 or index >= len(self.batch_entries):
             return
-        self._save_current_entry_state()
+        if save_current:
+            self._save_current_entry_state()
         self.current_entry_index = index
         self.window.set_current_audio_index(index)
         entry = self.batch_entries[index]

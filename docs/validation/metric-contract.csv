@@ -1,0 +1,51 @@
+﻿名称,单位,公式/分母,分析范围,缺失规则,代码路径,状态
+FileName,文本,文件名或下划线命名规则解析,输入文件,命名不匹配则元数据 NaN,backend/acoustic_analysis.py:34-63,元数据/参数字段；CSV流程验证覆盖，非准确性指标
+speaker,文本,文件名或下划线命名规则解析,输入文件,命名不匹配则元数据 NaN,backend/acoustic_analysis.py:34-63,元数据/参数字段；CSV流程验证覆盖，非准确性指标
+emotion,文本,文件名或下划线命名规则解析,输入文件,命名不匹配则元数据 NaN,backend/acoustic_analysis.py:34-63,元数据/参数字段；CSV流程验证覆盖，非准确性指标
+voice_type,文本,文件名或下划线命名规则解析,输入文件,命名不匹配则元数据 NaN,backend/acoustic_analysis.py:34-63,元数据/参数字段；CSV流程验证覆盖，非准确性指标
+type,文本,文件名或下划线命名规则解析,输入文件,命名不匹配则元数据 NaN,backend/acoustic_analysis.py:34-63,元数据/参数字段；CSV流程验证覆盖，非准确性指标
+audio_file,路径,原音频路径,输入文件,无,backend/acoustic_features.py:287,元数据/参数字段；CSV流程验证覆盖，非准确性指标
+pitch_floor,Hz,传入参数原样记录；自动特征路径忽略 time_step/filtered_ac_attenuation_at_top,元数据,缺键为空字符串,backend/acoustic_features.py:288-289,元数据/参数字段；CSV流程验证覆盖，非准确性指标
+pitch_ceiling,Hz,传入参数原样记录；自动特征路径忽略 time_step/filtered_ac_attenuation_at_top,元数据,缺键为空字符串,backend/acoustic_features.py:288-289,元数据/参数字段；CSV流程验证覆盖，非准确性指标
+time_step,s,传入参数原样记录；自动特征路径忽略 time_step/filtered_ac_attenuation_at_top,元数据,缺键为空字符串,backend/acoustic_features.py:288-289,元数据/参数字段；CSV流程验证覆盖，非准确性指标
+filtered_ac_attenuation_at_top,比值,传入参数原样记录；自动特征路径忽略 time_step/filtered_ac_attenuation_at_top,元数据,缺键为空字符串,backend/acoustic_features.py:288-289,元数据/参数字段；CSV流程验证覆盖，非准确性指标
+voicing_threshold,比值,传入参数原样记录；自动特征路径忽略 time_step/filtered_ac_attenuation_at_top,元数据,缺键为空字符串,backend/acoustic_features.py:288-289,元数据/参数字段；CSV流程验证覆盖，非准确性指标
+silence_threshold,比值,传入参数原样记录；自动特征路径忽略 time_step/filtered_ac_attenuation_at_top,元数据,缺键为空字符串,backend/acoustic_features.py:288-289,元数据/参数字段；CSV流程验证覆盖，非准确性指标
+octave_cost,代价,传入参数原样记录；自动特征路径忽略 time_step/filtered_ac_attenuation_at_top,元数据,缺键为空字符串,backend/acoustic_features.py:288-289,元数据/参数字段；CSV流程验证覆盖，非准确性指标
+octave_jump_cost,代价,传入参数原样记录；自动特征路径忽略 time_step/filtered_ac_attenuation_at_top,元数据,缺键为空字符串,backend/acoustic_features.py:288-289,元数据/参数字段；CSV流程验证覆盖，非准确性指标
+voiced_unvoiced_cost,代价,传入参数原样记录；自动特征路径忽略 time_step/filtered_ac_attenuation_at_top,元数据,缺键为空字符串,backend/acoustic_features.py:288-289,元数据/参数字段；CSV流程验证覆盖，非准确性指标
+Voiced_percent,0–1 比例,标签2且F0>0且非NaN帧数 / 标签非0帧数,人工轨迹非静音帧,无active帧为0,backend/acoustic_features.py:303-317,定义与回归通过；不代表输入音高估计在所有材料正确
+Voiced_duration_s,s,连续有声帧首尾时间±全局中位帧步长/2求和；左边界裁0,标签2且F0>0且非NaN,无有声为0,backend/acoustic_features.py:57-85;304-307,定义与回归通过；不代表输入音高估计在所有材料正确
+VoicedSegmentsPerSec,s^-1,各active区间内有声run数量 / active区间总时长,人工轨迹,无active时长为0,backend/acoustic_features.py:321-329,口径已审查；复杂信号真值验证未完成
+loudnessPeaksPerSec,s^-1,"原始强度分段find_peaks prominence=3 dB,distance=10帧 / active时长",标签非0；原始声音强度10ms步长,无active或active<50ms为0,backend/acoustic_features.py:139-164,口径已审查；复杂信号真值验证未完成
+F0_st_mean,半音（27.5Hz为0）,先12*log2(F0/27.5)；算术均值,标签2且F0>0且非NaN；逐帧等权,无有效帧NaN,backend/acoustic_features.py:331-355,定义与回归通过；不代表输入音高估计在所有材料正确
+F0_st_median,半音（27.5Hz为0）,先12*log2(F0/27.5)；中位数,标签2且F0>0且非NaN；逐帧等权,无有效帧NaN,backend/acoustic_features.py:331-355,定义与回归通过；不代表输入音高估计在所有材料正确
+F0_st_SD,半音（27.5Hz为0）,先12*log2(F0/27.5)；总体标准差 ddof=0,标签2且F0>0且非NaN；逐帧等权,无有效帧NaN,backend/acoustic_features.py:331-355,定义与回归通过；不代表输入音高估计在所有材料正确
+F0_st_P20,半音（27.5Hz为0）,先12*log2(F0/27.5)；numpy线性插值20分位,标签2且F0>0且非NaN；逐帧等权,无有效帧NaN,backend/acoustic_features.py:331-355,定义与回归通过；不代表输入音高估计在所有材料正确
+F0_st_P80,半音（27.5Hz为0）,先12*log2(F0/27.5)；numpy线性插值80分位,标签2且F0>0且非NaN；逐帧等权,无有效帧NaN,backend/acoustic_features.py:331-355,定义与回归通过；不代表输入音高估计在所有材料正确
+F0_st_Range_P20_P80,半音（27.5Hz为0）,先12*log2(F0/27.5)；P80-P20,标签2且F0>0且非NaN；逐帧等权,无有效帧NaN,backend/acoustic_features.py:331-355,定义与回归通过；不代表输入音高估计在所有材料正确
+Int_mean,dB re 20µPa（未校准文件电平）,算术均值,硬拼接active声音中强度>0 dB帧；逐帧等权,无有效帧NaN,backend/acoustic_features.py:166-186,正dB帧算术口径受限；Int_mean独立脚本通过
+Int_median,dB re 20µPa（未校准文件电平）,中位数,硬拼接active声音中强度>0 dB帧；逐帧等权,无有效帧NaN,backend/acoustic_features.py:166-186,正dB帧算术口径受限；Int_mean独立脚本通过
+Int_SD,dB re 20µPa（未校准文件电平）,总体标准差 ddof=0,硬拼接active声音中强度>0 dB帧；逐帧等权,无有效帧NaN,backend/acoustic_features.py:166-186,正dB帧算术口径受限；Int_mean独立脚本通过
+Int_P20,dB re 20µPa（未校准文件电平）,numpy线性插值20分位,硬拼接active声音中强度>0 dB帧；逐帧等权,无有效帧NaN,backend/acoustic_features.py:166-186,正dB帧算术口径受限；Int_mean独立脚本通过
+Int_P80,dB re 20µPa（未校准文件电平）,numpy线性插值80分位,硬拼接active声音中强度>0 dB帧；逐帧等权,无有效帧NaN,backend/acoustic_features.py:166-186,正dB帧算术口径受限；Int_mean独立脚本通过
+Int_Range_P20_P80,dB re 20µPa（未校准文件电平）,P80-P20,硬拼接active声音中强度>0 dB帧；逐帧等权,无有效帧NaN,backend/acoustic_features.py:166-186,正dB帧算术口径受限；Int_mean独立脚本通过
+F0_Frac_Rise,0–1 比例,相邻有效值差>0.25半音的数量 / 有效差数量,各active段内部先去NaN再差分,无数据NaN；有段无差0,backend/acoustic_features.py:95-115;336-341,已修复跨NaN差分；阈值/帧间隔的科学适用性未验证
+F0_Frac_Fall,0–1 比例,相邻有效值差< -0.25半音的数量 / 有效差数量,各active段内部先去NaN再差分,无数据NaN；有段无差0,backend/acoustic_features.py:95-115;336-341,已修复跨NaN差分；阈值/帧间隔的科学适用性未验证
+Int_Frac_Rise,0–1 比例,相邻有效值差>1dB的数量 / 有效差数量,各active段内部先去NaN再差分,无数据NaN；有段无差0,backend/acoustic_features.py:178-183;backend/acoustic_analysis.py:227-260,已修复跨NaN差分；阈值/帧间隔的科学适用性未验证
+Int_Frac_Fall,0–1 比例,相邻有效值差< -1dB的数量 / 有效差数量,各active段内部先去NaN再差分,无数据NaN；有段无差0,backend/acoustic_features.py:178-183;backend/acoustic_analysis.py:227-260,已修复跨NaN差分；阈值/帧间隔的科学适用性未验证
+F0_valid_ratio,0–1 比例,非NaN且>0帧数 / active帧数（不要求标签2）,active帧,无active为0,backend/acoustic_features.py:352;370,定义与回归通过；不代表输入音高估计在所有材料正确
+F0_octave_jump_count,次数,correct_octave_jumps在active拼接轨迹计数；修正轨迹不用于F0汇总,active轨迹；可跨静音接缝且含标签1,空轨迹0,backend/acoustic_features.py:314-315;backend/acoustic_analysis.py:263-316,口径已审查；复杂信号真值验证未完成
+Jitter,比例（非百分数）,Praat local：合格相邻周期绝对差均值/合格周期均值；周期0.0001–0.02s，factor1.3,拼接voiced原始声音；脉冲从原声音重新估计,voiced<50ms或异常NaN,backend/acoustic_features.py:188-200,同版本单段实现一致；拼接/脉冲或版本风险未解决
+Shimmer,比例（非百分数）,Praat local：合格相邻周期振幅差均值/合格振幅均值；period factor1.3，amplitude factor1.6,拼接voiced原始声音,voiced<50ms或异常NaN,backend/acoustic_features.py:188-200,同版本单段实现一致；拼接/脉冲或版本风险未解决
+HNR_dB,dB,Praat cross-correlation Harmonicity Get mean；默认minimum_pitch=75Hz,拼接voiced原始声音,voiced<50ms或异常NaN,backend/acoustic_features.py:202-206,同版本单段实现一致；拼接/脉冲或版本风险未解决
+COG_Hz,Hz,sum(f*|FFT|^2)/sum(|FFT|^2)，Praat power=2,拼接active原声音全谱,异常NaN,backend/acoustic_features.py:208-210,单段独立FFT/OLS通过；多段拼接受限
+HF500_ratio,比值（高频/低频，非总能量占比）,"Praat band energy(500,Nyquist) / band energy(0,500)",拼接active原声音全谱,低频能量<=0或异常NaN,backend/acoustic_features.py:211-216,已修复上限错误；单段独立FFT积分通过；多段拼接受限
+HF1000_ratio,比值（高频/低频，非总能量占比）,"Praat band energy(1000,Nyquist) / band energy(0,1000)",拼接active原声音全谱,低频能量<=0或异常NaN,backend/acoustic_features.py:211-216,已修复上限错误；单段独立FFT积分通过；多段拼接受限
+Spectrum_slope,dB/Hz,10*log10(|FFT|²) 对线性频率Hz的OLS斜率；仅power>0 bins,拼接active声音0至Nyquist；无频段限制,有效bin不足2或异常NaN,backend/acoustic_features.py:218-227,单段独立FFT/OLS通过；多段拼接受限
+F1_mean,Hz,Burg 5 formants、step10ms、默认window25ms/preemphasis50Hz；路径含gender2时ceiling5500否则5000；共同合格帧算术均值,"拼接active声音；按右侧pitch帧判断有声；50<F1<F2<F3<ceiling；BW1<1500,BW2<2000,BW3<2500且均>0",共同合格帧<5或异常NaN,backend/acoustic_features.py:374-393;398-509,未通过合成恢复检查；显示/导出及隐式参数待统一
+F2_mean,Hz,Burg 5 formants、step10ms、默认window25ms/preemphasis50Hz；路径含gender2时ceiling5500否则5000；共同合格帧算术均值,"拼接active声音；按右侧pitch帧判断有声；50<F1<F2<F3<ceiling；BW1<1500,BW2<2000,BW3<2500且均>0",共同合格帧<5或异常NaN,backend/acoustic_features.py:374-393;398-509,未通过合成恢复检查；显示/导出及隐式参数待统一
+F3_mean,Hz,Burg 5 formants、step10ms、默认window25ms/preemphasis50Hz；路径含gender2时ceiling5500否则5000；共同合格帧算术均值,"拼接active声音；按右侧pitch帧判断有声；50<F1<F2<F3<ceiling；BW1<1500,BW2<2000,BW3<2500且均>0",共同合格帧<5或异常NaN,backend/acoustic_features.py:374-393;398-509,未通过合成恢复检查；显示/导出及隐式参数待统一
+F1_BW_mean,Hz,Burg 5 formants、step10ms、默认window25ms/preemphasis50Hz；路径含gender2时ceiling5500否则5000；共同合格帧算术均值,"拼接active声音；按右侧pitch帧判断有声；50<F1<F2<F3<ceiling；BW1<1500,BW2<2000,BW3<2500且均>0",共同合格帧<5或异常NaN,backend/acoustic_features.py:374-393;398-509,未通过合成恢复检查；显示/导出及隐式参数待统一
+F2_BW_mean,Hz,Burg 5 formants、step10ms、默认window25ms/preemphasis50Hz；路径含gender2时ceiling5500否则5000；共同合格帧算术均值,"拼接active声音；按右侧pitch帧判断有声；50<F1<F2<F3<ceiling；BW1<1500,BW2<2000,BW3<2500且均>0",共同合格帧<5或异常NaN,backend/acoustic_features.py:374-393;398-509,未通过合成恢复检查；显示/导出及隐式参数待统一
+F3_BW_mean,Hz,Burg 5 formants、step10ms、默认window25ms/preemphasis50Hz；路径含gender2时ceiling5500否则5000；共同合格帧算术均值,"拼接active声音；按右侧pitch帧判断有声；50<F1<F2<F3<ceiling；BW1<1500,BW2<2000,BW3<2500且均>0",共同合格帧<5或异常NaN,backend/acoustic_features.py:374-393;398-509,未通过合成恢复检查；显示/导出及隐式参数待统一

@@ -244,12 +244,12 @@ def compute_segmented_rise_fall(times, values, segment_durations, threshold):
             seg_mask = (times >= seg_start) & (times < seg_end)
         seg_values = np.asarray(values[seg_mask], dtype=float)
 
-        seg_values = seg_values[~np.isnan(seg_values)]
         if len(seg_values) <= 1:
             seg_start = seg_end
             continue
 
-        diffs = np.diff(seg_values)
+        valid_pairs = np.isfinite(seg_values[:-1]) & np.isfinite(seg_values[1:])
+        diffs = np.diff(seg_values)[valid_pairs]
         transition_count += len(diffs)
         rise_count += np.sum(diffs > threshold)
         fall_count += np.sum(diffs < -threshold)
@@ -334,7 +334,20 @@ def extract_acoustic_features(filepath):
 
     # 防护：如果剔除静音后什么都没剩下，或者音频太短
     if snd is None or active_duration < 0.05:
-        return {'FileName': os.path.basename(filepath), 'Voiced_duration_s': 0.0}
+        row = dict.fromkeys([
+            'Int_mean', 'Int_median', 'Int_SD', 'Int_P20', 'Int_P80',
+            'Int_Range_P20_P80', 'Int_Frac_Rise', 'Int_Frac_Fall',
+            'Shimmer', 'HNR_dB', 'F0_st_mean', 'F0_st_median', 'F0_st_SD',
+            'F0_st_P20', 'F0_st_P80', 'F0_st_Range_P20_P80',
+            'F0_Frac_Rise', 'F0_Frac_Fall', 'Jitter',
+            'F1_mean', 'F2_mean', 'F3_mean', 'F1_BW_mean', 'F2_BW_mean', 'F3_BW_mean',
+            'COG_Hz', 'HF500_ratio', 'HF1000_ratio', 'Spectrum_slope',
+        ], np.nan)
+        row.update(metadata)
+        row.update(FileName=os.path.basename(filepath), Voiced_duration_s=0.0,
+                   Voiced_percent=0.0, loudnessPeaksPerSec=0.0,
+                   VoicedSegmentsPerSec=0.0, F0_valid_ratio=0.0, F0_octave_jump_count=0)
+        return row
 
     # 此时的 duration 是真正的“有效发声总时长”，不受头尾静音干扰！
     duration = active_duration
@@ -480,8 +493,8 @@ def extract_acoustic_features(filepath):
         cog = spectrum.get_center_of_gravity(2.0)
 
         total_energy = parselmouth.praat.call(spectrum, "Get band energy", 0, 0)
-        energy_above_500 = parselmouth.praat.call(spectrum, "Get band energy", 500, 0)
-        energy_above_1000 = parselmouth.praat.call(spectrum, "Get band energy", 1000, 0)
+        energy_above_500 = parselmouth.praat.call(spectrum, "Get band energy", 500, spectrum.xmax) if spectrum.xmax > 500 else 0.0
+        energy_above_1000 = parselmouth.praat.call(spectrum, "Get band energy", 1000, spectrum.xmax) if spectrum.xmax > 1000 else 0.0
         energy_below_500 = parselmouth.praat.call(spectrum, "Get band energy", 0, 500)
         energy_below_1000 = parselmouth.praat.call(spectrum, "Get band energy", 0, 1000)
 

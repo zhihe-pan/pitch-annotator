@@ -330,6 +330,7 @@ class AudioProcessor:
                 filtered_ac_attenuation_at_top,
             )
             filtered_snd = parselmouth.Sound(filtered_audio, snd.sampling_frequency)
+            filtered_snd.shift_times_by(snd.xmin)
             return filtered_snd.to_pitch_ac(
                 time_step=resolved_time_step,
                 pitch_floor=float(pitch_floor),

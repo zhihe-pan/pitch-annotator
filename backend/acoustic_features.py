@@ -3,6 +3,7 @@ import csv
 import numpy as np
 import parselmouth
 from core.exporter import PARAMETER_COLUMNS
+from core.pitch_track import validate_pitch_track
 from backend import acoustic_analysis as analysis
 
 
@@ -102,10 +103,10 @@ def _compute_segmented_rise_fall_for_track(times, values, intervals, threshold):
     for idx, (start, end) in enumerate(intervals):
         seg_mask = _interval_mask(times, start, end, idx == len(intervals) - 1)
         seg_values = np.asarray(values[seg_mask], dtype=float)
-        seg_values = seg_values[~np.isnan(seg_values)]
         if len(seg_values) <= 1:
             continue
-        diffs = np.diff(seg_values)
+        valid_pairs = np.isfinite(seg_values[:-1]) & np.isfinite(seg_values[1:])
+        diffs = np.diff(seg_values)[valid_pairs]
         transition_count += len(diffs)
         rise_count += int(np.sum(diffs > threshold))
         fall_count += int(np.sum(diffs < -threshold))
@@ -208,8 +209,8 @@ def _compute_activity_dependent_metrics(audio_path, active_intervals, voiced_int
     try:
         spectrum = snd.to_spectrum()
         cog = float(spectrum.get_center_of_gravity(2.0))
-        energy_above_500 = parselmouth.praat.call(spectrum, "Get band energy", 500, 0)
-        energy_above_1000 = parselmouth.praat.call(spectrum, "Get band energy", 1000, 0)
+        energy_above_500 = parselmouth.praat.call(spectrum, "Get band energy", 500, spectrum.xmax) if spectrum.xmax > 500 else 0.0
+        energy_above_1000 = parselmouth.praat.call(spectrum, "Get band energy", 1000, spectrum.xmax) if spectrum.xmax > 1000 else 0.0
         energy_below_500 = parselmouth.praat.call(spectrum, "Get band energy", 0, 500)
         energy_below_1000 = parselmouth.praat.call(spectrum, "Get band energy", 0, 1000)
         hf500_ratio = float(energy_above_500 / energy_below_500) if energy_below_500 > 0 else np.nan
@@ -283,6 +284,11 @@ def _project_track_to_active_timeline(timestamps, pitch_values, segment_labels, 
 
 
 def compute_feature_row_with_pitch_overrides(audio_path, pitch_params, timestamps=None, pitch_values=None, segment_labels=None):
+    audio_duration = parselmouth.Sound(str(audio_path)).duration
+    if timestamps is not None and pitch_values is not None:
+        timestamps, pitch_values, segment_labels = validate_pitch_track(
+            timestamps, pitch_values, segment_labels, duration=audio_duration
+        )
     row = extract_acoustic_feature_row(audio_path, pitch_params)
     row["audio_file"] = str(audio_path)
     for key in PARAMETER_COLUMNS:
@@ -303,7 +309,8 @@ def compute_feature_row_with_pitch_overrides(audio_path, pitch_params, timestamp
     active_mask = segment_labels != 0
     voiced_mask = (segment_labels == 2) & (~np.isnan(pitch_values)) & (pitch_values > 0)
     active_intervals = _build_active_intervals_from_labels(timestamps, segment_labels)
-    voiced_intervals = _build_intervals_from_mask(timestamps, voiced_mask)
+    active_intervals = [(start, min(end, audio_duration)) for start, end in active_intervals if start < audio_duration]
+    voiced_intervals = [(start, min(end, audio_duration)) for start, end in _build_intervals_from_mask(timestamps, voiced_mask) if start < audio_duration]
     voiced_duration = float(sum(end - start for start, end in voiced_intervals))
     active_times, active_pitch_values, _ = _project_track_to_active_timeline(
         timestamps,

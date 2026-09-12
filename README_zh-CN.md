@@ -33,6 +33,10 @@
 
 声学特征导出包含有声总时长 `Voiced_duration_s`；使用当前标注时，Jitter、Shimmer 和 HNR 基于有声片段计算。
 
+CSV 时间必须为非负、严格递增的等间隔帧时间，且不能超出原音频时长；无声帧请保留对应时间行。遇到多个同名音频时，请在 `audio_file` 中指定准确路径。
+
+声学指标的已验证范围和限制见[准确性审计](docs/validation/accuracy-report.md)。当前不应把多段拼接的音质指标或自动共振峰输出直接视为已验证的研究结果。
+
 ## 安装
 
 **环境要求：** Python 3.11 或 3.12。当前音频播放调用 macOS 的 `afplay`；Windows/Linux 播放尚不支持。

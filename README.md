@@ -35,6 +35,10 @@ Use **File → Import Pitch CSVs…** to reopen exported pitch tracks for furthe
 
 Acoustic feature export includes total voiced duration (`Voiced_duration_s`). When using current annotations, Jitter, Shimmer, and HNR are calculated from voiced audio segments.
 
+CSV timestamps must be non-negative, strictly increasing, uniformly spaced, and within the original audio duration. Keep rows for unvoiced frames. If audio filenames are ambiguous, specify the exact path in `audio_file`.
+
+See the [accuracy audit](docs/validation/accuracy-report.md) (Chinese) for validation scope and limitations. Voice-quality metrics from concatenated segments and automatic formant outputs are not yet validated for general research use.
+
 ## Installation
 
 **Requirements:** Python 3.11 or 3.12. Audio playback currently uses macOS `afplay`; Windows/Linux playback is not supported.
